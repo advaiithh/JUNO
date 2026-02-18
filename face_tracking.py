@@ -31,6 +31,10 @@ except:
 REGISTERED_FACES_FILE = "registered_faces_advanced.pkl"
 OCCUPANCY_LOG_FILE = "logs/occupancy_log.json"
 
+# Initialize HOG person detector
+HOG_PERSON_DETECTOR = cv2.HOGDescriptor()
+HOG_PERSON_DETECTOR.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
 class RoomOccupancyTracker:
     """Track people entering and exiting the room"""
     
@@ -38,12 +42,15 @@ class RoomOccupancyTracker:
         self.people_in_room = {}  # {person_name: entry_time}
         self.people_last_seen = {}  # {person_name: timestamp}
         self.unknown_faces = {}  # {face_id: last_seen_time}
+        self.detected_bodies = {}  # {body_id: last_seen_time} - for distant people
         self.unknown_counter = 0  # Counter for unknown person IDs
+        self.body_counter = 0  # Counter for body-only detections
         self.exit_timeout = 5  # Seconds before considering person left
         self.entry_log = []
         self.exit_log = []
         self.total_visitors = 0
         self.total_unknown_visitors = 0
+        self.total_body_detections = 0
         
         # Load existing logs if available
         self.load_logs()
@@ -58,6 +65,7 @@ class RoomOccupancyTracker:
                     self.exit_log = data.get('exit_log', [])
                     self.total_visitors = data.get('total_visitors', 0)
                     self.total_unknown_visitors = data.get('total_unknown_visitors', 0)
+                    self.total_body_detections = data.get('total_body_detections', 0)
             except:
                 pass
     
@@ -69,10 +77,31 @@ class RoomOccupancyTracker:
             'exit_log': self.exit_log[-100:],
             'total_visitors': self.total_visitors,
             'total_unknown_visitors': self.total_unknown_visitors,
+            'total_body_detections': self.total_body_detections,
             'last_updated': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         with open(OCCUPANCY_LOG_FILE, 'w') as f:
             json.dump(data, f, indent=2)
+    
+    def body_detected(self, body_id):
+        """Called when a person body is detected (no face visible)"""
+        current_time = time.time()
+        
+        # Update last seen time for this body
+        if body_id not in self.detected_bodies:
+            self.detected_bodies[body_id] = current_time
+            self.total_body_detections += 1
+            entry_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.entry_log.append({
+                'person': f'Person_Body_{body_id}',
+                'action': 'DETECTED',
+                'timestamp': entry_time
+            })
+            print(f"\n👤 Person detected (body only) #{body_id} at {entry_time}")
+            print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
+            self.save_logs()
+        else:
+            self.detected_bodies[body_id] = current_time
     
     def unknown_person_detected(self, face_id):
         """Called when an unknown person is detected"""
@@ -122,6 +151,7 @@ class RoomOccupancyTracker:
         current_time = time.time()
         people_to_remove = []
         unknown_to_remove = []
+        bodies_to_remove = []
         
         # Check registered people
         for person_name, last_seen in self.people_last_seen.items():
@@ -134,6 +164,11 @@ class RoomOccupancyTracker:
         for face_id, last_seen in list(self.unknown_faces.items()):
             if current_time - last_seen > self.exit_timeout:
                 unknown_to_remove.append(face_id)
+        
+        # Check detected bodies
+        for body_id, last_seen in list(self.detected_bodies.items()):
+            if current_time - last_seen > self.exit_timeout:
+                bodies_to_remove.append(body_id)
         
         # Remove people who left
         for person_name in people_to_remove:
@@ -160,10 +195,23 @@ class RoomOccupancyTracker:
             print(f"\n✗ Unknown person #{face_id} exited at {exit_time}")
             print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
             self.save_logs()
+        
+        # Remove bodies that left
+        for body_id in bodies_to_remove:
+            del self.detected_bodies[body_id]
+            exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.exit_log.append({
+                'person': f'Person_Body_{body_id}',
+                'action': 'LEFT',
+                'timestamp': exit_time
+            })
+            print(f"\n✗ Person (body #{body_id}) left at {exit_time}")
+            print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
+            self.save_logs()
     
     def get_occupancy_count(self):
-        """Get current number of people in room (including unknowns)"""
-        return len(self.people_in_room) + len(self.unknown_faces)
+        """Get current number of people in room (including unknowns and bodies)"""
+        return len(self.people_in_room) + len(self.unknown_faces) + len(self.detected_bodies)
     
     def get_people_in_room(self):
         """Get list of people currently in room"""
@@ -175,8 +223,10 @@ class RoomOccupancyTracker:
             'current_occupancy': self.get_occupancy_count(),
             'known_people': list(self.people_in_room.keys()),
             'unknown_count': len(self.unknown_faces),
+            'body_only_count': len(self.detected_bodies),
             'total_visitors_today': self.total_visitors,
             'total_unknown_visitors': self.total_unknown_visitors,
+            'total_body_detections': self.total_body_detections,
             'recent_entries': self.entry_log[-5:],
             'recent_exits': self.exit_log[-5:]
         }
@@ -201,6 +251,28 @@ def load_registered_people():
         # Old format
         print("⚠ Old format detected. Please re-register faces.")
         return None
+
+
+def detect_people_bodies(frame):
+    """Detect full bodies/people even at distance using HOG"""
+    # Resize frame for faster detection
+    small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+    
+    # Detect people
+    bodies, weights = HOG_PERSON_DETECTOR.detectMultiScale(
+        small_frame, 
+        winStride=(8, 8),
+        padding=(4, 4),
+        scale=1.05,
+        finalThreshold=1.5
+    )
+    
+    # Scale back to original size
+    scaled_bodies = []
+    for (x, y, w, h) in bodies:
+        scaled_bodies.append((x*2, y*2, w*2, h*2))
+    
+    return scaled_bodies
 
 
 def detect_faces_simple(frame):
@@ -320,9 +392,14 @@ def main():
             # Detect faces
             face_locations = detect_faces_simple(frame)
             
+            # Detect bodies (people at distance)
+            body_locations = detect_people_bodies(frame)
+            
             detected_people = set()
             unknown_face_id = 0
+            body_id = 0
             
+            # Process face detections first (higher priority)
             for face_location in face_locations:
                 top, right, bottom, left = face_location
                 
@@ -360,6 +437,30 @@ def main():
                     cv2.putText(frame, "Detected", (left, top-10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
             
+            # Process body detections (people at distance without clear face)
+            for (x, y, w, h) in body_locations:
+                # Check if this body overlaps with any detected face
+                is_overlapping = False
+                for face_location in face_locations:
+                    face_top, face_right, face_bottom, face_left = face_location
+                    # Check if body area contains this face
+                    if (face_left >= x and face_right <= x+w and 
+                        face_top >= y and face_bottom <= y+h):
+                        is_overlapping = True
+                        break
+                
+                # Only count body if no face was detected in this area
+                if not is_overlapping:
+                    body_id += 1
+                    tracker.body_detected(body_id)
+                    
+                    # Draw body rectangle
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
+                    cv2.putText(frame, f"Person #{body_id}", (x, y-10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                    cv2.putText(frame, "(Body Detection)", (x, y+h+25),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
             # Check for exits
             tracker.check_exits()
         
@@ -367,12 +468,13 @@ def main():
         occupancy = tracker.get_occupancy_count()
         known_people = tracker.get_people_in_room()
         unknown_count = len(tracker.unknown_faces)
+        body_count = len(tracker.detected_bodies)
         
         # Occupancy counter
-        cv2.rectangle(frame, (10, 10), (400, 150), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (400, 150), (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 10), (450, 180), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (450, 180), (255, 255, 255), 2)
         
-        cv2.putText(frame, f"OCCUPANCY: {occupancy}", (20, 45),
+        cv2.putText(frame, f"TOTAL OCCUPANCY: {occupancy}", (20, 45),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
         
         # Show known people
@@ -380,22 +482,30 @@ def main():
             people_text = ", ".join(known_people[:2])
             if len(known_people) > 2:
                 people_text += f" +{len(known_people)-2}"
-            cv2.putText(frame, f"Known: {people_text}", (20, 80),
+            cv2.putText(frame, f"Known: {people_text}", (20, 85),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         else:
-            cv2.putText(frame, "Known: None", (20, 80),
+            cv2.putText(frame, "Known: None", (20, 85),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
         
         # Show unknown count
         if unknown_count > 0:
-            cv2.putText(frame, f"Unknown: {unknown_count}", (20, 110),
+            cv2.putText(frame, f"Unknown Faces: {unknown_count}", (20, 115),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
         else:
-            cv2.putText(frame, "Unknown: 0", (20, 110),
+            cv2.putText(frame, "Unknown Faces: 0", (20, 115),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
+        
+        # Show body-only detections
+        if body_count > 0:
+            cv2.putText(frame, f"Distant People: {body_count}", (20, 145),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        else:
+            cv2.putText(frame, "Distant People: 0", (20, 145),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
         
         # Total visitors
-        cv2.putText(frame, f"Total: {tracker.total_visitors}K + {tracker.total_unknown_visitors}U", (20, 140),
+        cv2.putText(frame, f"Total: {tracker.total_visitors}K + {tracker.total_unknown_visitors}U + {tracker.total_body_detections}D", (20, 170),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         # Instructions
@@ -417,9 +527,11 @@ def main():
     print("="*70)
     print(f"Final Occupancy: {summary['current_occupancy']} person(s)")
     print(f"Known People: {', '.join(summary['known_people']) if summary['known_people'] else 'None'}")
-    print(f"Unknown People: {summary['unknown_count']}")
+    print(f"Unknown Faces: {summary['unknown_count']}")
+    print(f"Distant People (Body Only): {summary['body_only_count']}")
     print(f"Total Known Visitors: {summary['total_visitors_today']}")
     print(f"Total Unknown Visitors: {summary['total_unknown_visitors']}")
+    print(f"Total Body Detections: {summary['total_body_detections']}")
     print("="*70)
 
 
