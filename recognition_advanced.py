@@ -625,7 +625,8 @@ def register_face_owner():
                         "people": {
                             "Owner": {
                                 "encodings": old_data["encodings"],
-                                "registration_date": old_data.get("registration_date", "Unknown")
+                                "registration_date": old_data.get("registration_date", "Unknown"),
+                                "sample_count": len(old_data["encodings"])
                             }
                         },
                         "recognition_method": old_data.get("recognition_method", RECOGNITION_METHOD)
@@ -682,21 +683,19 @@ def recognize_face():
     if "people" in registered_data:
         # New multi-person format
         all_people = registered_data["people"]
-        registered_encodings = []
-        person_names = []
-        for name, data in all_people.items():
-            registered_encodings.extend(data["encodings"])
-            person_names.extend([name] * len(data["encodings"]))
         print(f"\nLoaded {len(all_people)} registered people:")
         for name in all_people.keys():
             print(f"  - {name}")
     else:
-        # Old single-person format
-        registered_encodings = registered_data["encodings"]
-        person_names = ["Owner"] * len(registered_encodings)
+        # Old single-person format - convert to new format
+        all_people = {
+            "Owner": {
+                "encodings": registered_data["encodings"]
+            }
+        }
         print("\nUsing legacy single-person format")
     
-    if len(registered_encodings) == 0:
+    if len(all_people) == 0:
         print("⚠ No registered face data available!")
         return
     
@@ -707,27 +706,27 @@ def recognize_face():
     # Display memory summary
     print(memory.get_summary())
     
-    # VERY STRICT thresholds to prevent false positives
+    # ADJUSTED thresholds for better detection with multiple people
     # Lower = stricter, Higher = more lenient
     if USE_FACE_RECOGNITION:
-        threshold = 0.40  # STRICT threshold for face_recognition (Euclidean distance)
-        min_matches = 10  # Must match at least 10 out of 12 samples (83%)
-        max_allowed_distance = 0.45  # Maximum distance for any single match
+        threshold = 0.50  # More lenient for face_recognition
+        min_match_ratio = 0.60  # Must match at least 60% of person's samples
+        max_allowed_distance = 0.50  # Maximum distance for best match
     elif RECOGNITION_METHOD == "insightface":
-        # InsightFace uses cosine similarity (very accurate, can be slightly more lenient)
-        threshold = 0.25  # Cosine distance threshold (0.25 = 75% similar)
-        min_matches = 10  # Must match 10 out of 12 samples (83%)
-        max_allowed_distance = 0.35  # Maximum distance for best match
+        # InsightFace uses cosine similarity
+        threshold = 0.40  # More lenient - 0.40 is about 60% similar
+        min_match_ratio = 0.58  # Must match 58% (7 out of 12)
+        max_allowed_distance = 0.45  # More lenient for best match
     elif RECOGNITION_METHOD == "arcface":
-        # ArcFace uses cosine similarity (very accurate, can be slightly more lenient)
-        threshold = 0.25  # Cosine distance threshold (0.25 = 75% similar)
-        min_matches = 10  # Must match 10 out of 12 samples (83%)
-        max_allowed_distance = 0.35  # Maximum distance for best match
+        # ArcFace uses cosine similarity
+        threshold = 0.40  # More lenient
+        min_match_ratio = 0.58  # Must match 58%
+        max_allowed_distance = 0.45  # More lenient for best match
     else:
-        # VERY STRICT for enhanced multi-feature fallback method
-        threshold = 0.18  # VERY STRICT threshold for cosine similarity (82% similar minimum)
-        min_matches = 10  # Must match 10 out of 12 samples (83%)
-        max_allowed_distance = 0.25  # Maximum distance for best match
+        # Enhanced multi-feature fallback method
+        threshold = 0.25  # More lenient
+        min_match_ratio = 0.60  # Must match 60% of person's samples
+        max_allowed_distance = 0.35  # More lenient for best match
     
     print("\n=== ADVANCED FACE RECOGNITION MODE WITH MEMORY ===")
     if USE_FACE_RECOGNITION:
@@ -743,10 +742,11 @@ def recognize_face():
         print("✓ Using enhanced multi-feature recognition (LBP + HOG + Histogram + Edge)")
         print("  Multi-scale feature extraction - GOOD ACCURACY")
         print("  For best results: Install InsightFace models")
-    print(f"\nSettings: threshold={threshold:.2f}, min_matches={min_matches}/{len(registered_encodings)}")
+    print(f"\nSettings: threshold={threshold:.2f}, min_match_ratio={min_match_ratio*100:.0f}%")
     print(f"Max allowed distance for best match: {max_allowed_distance:.2f}")
-    print("\n⚠ STRICT MODE: Multi-layer validation active to prevent false positives")
-    print("Press Q to quit recognition mode")
+    print(f"Registered people: {len(all_people)}")
+    print("\n✓ OPTIMIZED MODE: Balanced validation for reliable detection")
+    print("Press Q to quit recognition mode\n")
     
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -796,7 +796,7 @@ def recognize_face():
             if idx < len(cached_results):
                 # Use cached result
                 (is_owner, label, label_color, confidence, quality_label, 
-                 match_count, avg_distance, min_distance, rejection_reason) = cached_results[idx]
+                 match_count, total_samples, avg_distance, min_distance, rejection_reason) = cached_results[idx]
             else:
                 # Process this face (only happens once every N frames)
                 # Face quality check - skip if too small or poor quality
@@ -815,52 +815,108 @@ def recognize_face():
                 if encoding is None:
                     continue
                 
-                # Compare with registered encodings
-                if USE_FACE_RECOGNITION:
-                    # Use face_recognition's built-in comparison (more accurate)
-                    matches = face_recognition.compare_faces(registered_encodings, encoding, tolerance=threshold)
-                    distances = face_recognition.face_distance(registered_encodings, encoding)
-                else:
-                    # Fallback: compute distances manually using cosine similarity
-                    matches = []
-                    distances = []
-                    for reg_encoding in registered_encodings:
-                        # Use cosine similarity for better comparison
-                        similarity = np.dot(encoding, reg_encoding) / (np.linalg.norm(encoding) * np.linalg.norm(reg_encoding) + 1e-6)
-                        distance = 1 - similarity  # Convert similarity to distance
-                        distances.append(distance)
-                        matches.append(distance < threshold)
+                # Compare with each registered person individually
+                best_person = None
+                best_person_score = 0
+                best_person_confidence = 0
+                best_person_stats = {}
+                debug_info = []  # For debugging
                 
-                match_count = sum(matches)
-                min_distance = min(distances) if len(distances) > 0 else 1.0
-                avg_distance = np.mean(distances) if len(distances) > 0 else 1.0
-            best_match_idx = np.argmin(distances) if len(distances) > 0 else -1
-            matched_person_name = person_names[best_match_idx] if best_match_idx >= 0 else "Unknown"
-                if not cond1_matches:
-                    rejection_reason.append(f"Low matches: {match_count}/{len(registered_encodings)}")
-                if not cond2_avg:
-                    rejection_reason.append(f"High avg dist: {avg_distance:.3f}")
-                if not cond3_best:
-                    rejection_reason.append(f"Poor best match: {min_distance:.3f}")
-                if not cond4_worst:
-                    rejection_reason.append(f"Bad outlier: {max_distance:.3f}")
+                for person_name, person_data in all_people.items():
+                    person_encodings = person_data["encodings"]
+                    
+                    # Compare with this person's encodings
+                    if USE_FACE_RECOGNITION:
+                        matches = face_recognition.compare_faces(person_encodings, encoding, tolerance=threshold)
+                        distances = face_recognition.face_distance(person_encodings, encoding)
+                    else:
+                        # Fallback: compute distances manually using cosine similarity
+                        matches = []
+                        distances = []
+                        for reg_encoding in person_encodings:
+                            similarity = np.dot(encoding, reg_encoding) / (np.linalg.norm(encoding) * np.linalg.norm(reg_encoding) + 1e-6)
+                            distance = 1 - similarity
+                            distances.append(distance)
+                            matches.append(distance < threshold)
+                    
+                    match_count = sum(matches)
+                    min_distance = min(distances) if len(distances) > 0 else 1.0
+                    avg_distance = np.mean(distances) if len(distances) > 0 else 1.0
+                    max_distance = max(distances) if len(distances) > 0 else 1.0
+                    
+                    # Calculate match ratio for THIS person
+                    match_ratio = match_count / len(person_encodings)
+                    required_matches = int(len(person_encodings) * min_match_ratio)
+                    
+                    # More lenient matching - just need good average and some matches
+                    person_matches = (
+                        match_count >= required_matches and
+                        min_distance < max_allowed_distance
+                    )
+                    
+                    # Store debug info
+                    debug_info.append(f"{person_name}: {match_count}/{len(person_encodings)} matches, min_dist={min_distance:.3f}, avg={avg_distance:.3f}")
+                    
+                    if person_matches:
+                        # Calculate confidence score for this person
+                        # More weight on minimum distance (best match)
+                        distance_score = max(0, 1 - (avg_distance / threshold))
+                        best_match_score = max(0, 1 - (min_distance / max_allowed_distance))
+                        
+                        # Give more weight to best match and match ratio
+                        person_score = (
+                            match_ratio * 0.25 +          # 25% weight on match ratio
+                            distance_score * 0.25 +       # 25% weight on average
+                            best_match_score * 0.50       # 50% weight on best match
+                        )
+                        
+                        # Keep track of best matching person
+                        if person_score > best_person_score:
+                            best_person = person_name
+                            best_person_score = person_score
+                            best_person_confidence = person_score * 100
+                            best_person_stats = {
+                                'match_count': match_count,
+                                'total_samples': len(person_encodings),
+                                'avg_distance': avg_distance,
+                                'min_distance': min_distance,
+                                'max_distance': max_distance
+                            }
+                
+                # Print debug info for unknown faces
+                if not best_person and frame_count % process_every_n_frames == 0:
+                    print(f"\n[DEBUG] No match found:")
+                    for info in debug_info:
+                        print(f"  {info}")
+                    print(f"  Required: {int(12 * min_match_ratio)} matches, max_dist < {max_allowed_distance:.3f}\n")
+                
+                # Determine final result
+                if best_person:
+                    is_owner = True
+                    matched_person_name = best_person
+                    confidence = max(min(best_person_confidence, 94.0), 70.0)
+                    match_count = best_person_stats['match_count']
+                    total_samples = best_person_stats['total_samples']
+                    avg_distance = best_person_stats['avg_distance']
+                    min_distance = best_person_stats['min_distance']
+                    rejection_reason = []
+                    
+                    # Print success message occasionally
+                    if frame_count % (process_every_n_frames * 10) == 0:
+                        print(f"✓ Detected: {best_person} (Confidence: {confidence:.1f}%, Matches: {match_count}/{total_samples})")
+                else:
+                    is_owner = False
+                    matched_person_name = "Unknown"
+                    confidence = 0
+                    match_count = 0
+                    total_samples = 0
+                    avg_distance = 1.0
+                    min_distance = 1.0
+                    rejection_reason = ["No person matched criteria"]
             
                 if is_owner:
                     label = matched_person_name.upper()
                     label_color = (0, 255, 0)  # Green
-                    
-                    # Confidence calculation with stricter scoring
-                    match_ratio = match_count / len(registered_encodings)
-                    distance_score = max(0, 1 - (avg_distance / threshold))
-                    best_match_score = max(0, 1 - (min_distance / max_allowed_distance))
-                    
-                    # Weighted confidence: match ratio, average distance, and best match
-                    confidence = (
-                        match_ratio * 0.3 +           # 30% weight on match count
-                        distance_score * 0.35 +       # 35% weight on average distance
-                        best_match_score * 0.35       # 35% weight on best match quality
-                    ) * 100
-                    confidence = max(min(confidence, 94.0), 70.0)  # Cap at 94%, minimum 70%
                     
                     owner_seen = True
                     
@@ -886,7 +942,7 @@ def recognize_face():
                 
                 # Cache the result
                 cached_results.append((is_owner, label, label_color, confidence, quality_label,
-                                     match_count, avg_distance, min_distance, rejection_reason))
+                                     match_count, total_samples, avg_distance, min_distance, rejection_reason))
             
             # Draw rectangle and label
             cv2.rectangle(frame, (left, top), (right, bottom), label_color, 2)
@@ -906,8 +962,12 @@ def recognize_face():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, label_color, 2)
             
             # Detailed metrics
-            cv2.putText(frame, f"M:{match_count}/{len(registered_encodings)} Avg:{avg_distance:.3f} Min:{min_distance:.3f}", 
-                        (left, bottom+50), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+            if is_owner and total_samples > 0:
+                cv2.putText(frame, f"M:{match_count}/{total_samples} Avg:{avg_distance:.3f} Min:{min_distance:.3f}", 
+                            (left, bottom+50), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+            else:
+                cv2.putText(frame, f"No match - Avg:{avg_distance:.3f} Min:{min_distance:.3f}", 
+                            (left, bottom+50), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
             cv2.putText(frame, f"Quality: {quality_label}", (left, bottom+70),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
@@ -1004,8 +1064,9 @@ def main():
                     print("\n===REGISTERED PEOPLE===")
                     for name, info in data["people"].items():
                         print(f"  ✓ {name}")
-                        print(f"    Registered: {info['registration_date']}")
-                        print(f"    Samples: {info['sample_count']}")
+                        print(f"    Registered: {info.get('registration_date', 'Unknown')}")
+                        sample_count = info.get('sample_count', len(info.get('encodings', [])))
+                        print(f"    Samples: {sample_count}")
                 else:
                     print("\n⚠ Using old format - 1 person registered")
             else:
