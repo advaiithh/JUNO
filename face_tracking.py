@@ -37,10 +37,13 @@ class RoomOccupancyTracker:
     def __init__(self):
         self.people_in_room = {}  # {person_name: entry_time}
         self.people_last_seen = {}  # {person_name: timestamp}
+        self.unknown_faces = {}  # {face_id: last_seen_time}
+        self.unknown_counter = 0  # Counter for unknown person IDs
         self.exit_timeout = 5  # Seconds before considering person left
         self.entry_log = []
         self.exit_log = []
         self.total_visitors = 0
+        self.total_unknown_visitors = 0
         
         # Load existing logs if available
         self.load_logs()
@@ -54,6 +57,7 @@ class RoomOccupancyTracker:
                     self.entry_log = data.get('entry_log', [])
                     self.exit_log = data.get('exit_log', [])
                     self.total_visitors = data.get('total_visitors', 0)
+                    self.total_unknown_visitors = data.get('total_unknown_visitors', 0)
             except:
                 pass
     
@@ -64,10 +68,31 @@ class RoomOccupancyTracker:
             'entry_log': self.entry_log[-100:],  # Keep last 100 entries
             'exit_log': self.exit_log[-100:],
             'total_visitors': self.total_visitors,
+            'total_unknown_visitors': self.total_unknown_visitors,
             'last_updated': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         with open(OCCUPANCY_LOG_FILE, 'w') as f:
             json.dump(data, f, indent=2)
+    
+    def unknown_person_detected(self, face_id):
+        """Called when an unknown person is detected"""
+        current_time = time.time()
+        
+        # Update last seen time for this unknown face
+        if face_id not in self.unknown_faces:
+            self.unknown_faces[face_id] = current_time
+            self.total_unknown_visitors += 1
+            entry_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.entry_log.append({
+                'person': f'Unknown_{face_id}',
+                'action': 'ENTERED',
+                'timestamp': entry_time
+            })
+            print(f"\n⚠ Unknown person #{face_id} detected at {entry_time}")
+            print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
+            self.save_logs()
+        else:
+            self.unknown_faces[face_id] = current_time
     
     def person_detected(self, person_name):
         """Called when a person is detected in frame"""
@@ -96,13 +121,21 @@ class RoomOccupancyTracker:
         """Check if anyone has left the room"""
         current_time = time.time()
         people_to_remove = []
+        unknown_to_remove = []
         
+        # Check registered people
         for person_name, last_seen in self.people_last_seen.items():
             # If person hasn't been seen for exit_timeout seconds
             if current_time - last_seen > self.exit_timeout:
                 if person_name in self.people_in_room:
                     people_to_remove.append(person_name)
         
+        # Check unknown people
+        for face_id, last_seen in list(self.unknown_faces.items()):
+            if current_time - last_seen > self.exit_timeout:
+                unknown_to_remove.append(face_id)
+        
+        # Remove people who left
         for person_name in people_to_remove:
             del self.people_in_room[person_name]
             exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -112,12 +145,25 @@ class RoomOccupancyTracker:
                 'timestamp': exit_time
             })
             print(f"\n✗ {person_name} EXITED the room at {exit_time}")
-            print(f"  Current occupancy: {len(self.people_in_room)} person(s)")
+            print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
+            self.save_logs()
+        
+        # Remove unknown people who left
+        for face_id in unknown_to_remove:
+            del self.unknown_faces[face_id]
+            exit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.exit_log.append({
+                'person': f'Unknown_{face_id}',
+                'action': 'EXITED',
+                'timestamp': exit_time
+            })
+            print(f"\n✗ Unknown person #{face_id} exited at {exit_time}")
+            print(f"  Current occupancy: {self.get_occupancy_count()} person(s)")
             self.save_logs()
     
     def get_occupancy_count(self):
-        """Get current number of people in room"""
-        return len(self.people_in_room)
+        """Get current number of people in room (including unknowns)"""
+        return len(self.people_in_room) + len(self.unknown_faces)
     
     def get_people_in_room(self):
         """Get list of people currently in room"""
@@ -126,9 +172,11 @@ class RoomOccupancyTracker:
     def get_summary(self):
         """Get occupancy summary"""
         return {
-            'current_occupancy': len(self.people_in_room),
-            'people_present': list(self.people_in_room.keys()),
+            'current_occupancy': self.get_occupancy_count(),
+            'known_people': list(self.people_in_room.keys()),
+            'unknown_count': len(self.unknown_faces),
             'total_visitors_today': self.total_visitors,
+            'total_unknown_visitors': self.total_unknown_visitors,
             'recent_entries': self.entry_log[-5:],
             'recent_exits': self.exit_log[-5:]
         }
@@ -162,26 +210,28 @@ def detect_faces_simple(frame):
         face_locations = face_recognition.face_locations(rgb_frame, model='hog')
         return face_locations
     elif USE_INSIGHTFACE:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = INSIGHTFACE_MODEL.detector.detect_faces(frame)
-        if faces is not None and len(faces) > 0:
-            face_locations = []
-            for face in faces:
-                bbox = face['bbox']
-                x, y, w, h = bbox
-                face_locations.append((y, x+w, y+h, x))
-            return face_locations
-    else:
-        # Fallback to Haar Cascade
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-        face_locations = []
-        for (x, y, w, h) in faces:
-            face_locations.append((y, x+w, y+h, x))
-        return face_locations
+        # Use InsightFace detector
+        try:
+            faces, _ = INSIGHTFACE_MODEL.detector.detect(frame)
+            if faces is not None and len(faces) > 0:
+                face_locations = []
+                for face in faces:
+                    x1, y1, x2, y2, score = face
+                    face_locations.append((int(y1), int(x2), int(y2), int(x1)))
+                return face_locations
+        except:
+            pass
+    
+    # Fallback to Haar Cascade
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+    face_locations = []
+    for (x, y, w, h) in faces:
+        face_locations.append((y, x+w, y+h, x))
+    return face_locations
 
 
 def extract_face_encoding_simple(frame, face_location):
@@ -271,6 +321,7 @@ def main():
             face_locations = detect_faces_simple(frame)
             
             detected_people = set()
+            unknown_face_id = 0
             
             for face_location in face_locations:
                 top, right, bottom, left = face_location
@@ -294,37 +345,57 @@ def main():
                         cv2.putText(frame, f"Dist: {distance:.3f}", (left, bottom+25),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                     else:
-                        # Unknown person
-                        cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
-                        cv2.putText(frame, "Unknown", (left, top-10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                        # Unknown person - track them too
+                        unknown_face_id += 1
+                        tracker.unknown_person_detected(unknown_face_id)
+                        
+                        cv2.rectangle(frame, (left, top), (right, bottom), (0, 165, 255), 2)
+                        cv2.putText(frame, f"Unknown #{unknown_face_id}", (left, top-10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+                        cv2.putText(frame, "Counting in occupancy", (left, bottom+25),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                else:
+                    # Face detected but no encoding - still count it
+                    cv2.rectangle(frame, (left, top), (right, bottom), (128, 128, 128), 2)
+                    cv2.putText(frame, "Detected", (left, top-10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
             
             # Check for exits
             tracker.check_exits()
         
         # Display occupancy info
         occupancy = tracker.get_occupancy_count()
-        people_in_room = tracker.get_people_in_room()
+        known_people = tracker.get_people_in_room()
+        unknown_count = len(tracker.unknown_faces)
         
         # Occupancy counter
-        cv2.rectangle(frame, (10, 10), (350, 120), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (350, 120), (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 10), (400, 150), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (400, 150), (255, 255, 255), 2)
         
         cv2.putText(frame, f"OCCUPANCY: {occupancy}", (20, 45),
                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
         
-        if people_in_room:
-            people_text = ", ".join(people_in_room[:3])
-            if len(people_in_room) > 3:
-                people_text += f" +{len(people_in_room)-3} more"
-            cv2.putText(frame, f"Present: {people_text}", (20, 80),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        # Show known people
+        if known_people:
+            people_text = ", ".join(known_people[:2])
+            if len(known_people) > 2:
+                people_text += f" +{len(known_people)-2}"
+            cv2.putText(frame, f"Known: {people_text}", (20, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         else:
-            cv2.putText(frame, "No one in room", (20, 80),
+            cv2.putText(frame, "Known: None", (20, 80),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
+        
+        # Show unknown count
+        if unknown_count > 0:
+            cv2.putText(frame, f"Unknown: {unknown_count}", (20, 110),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+        else:
+            cv2.putText(frame, "Unknown: 0", (20, 110),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
         
         # Total visitors
-        cv2.putText(frame, f"Total Visitors: {tracker.total_visitors}", (20, 110),
+        cv2.putText(frame, f"Total: {tracker.total_visitors}K + {tracker.total_unknown_visitors}U", (20, 140),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         # Instructions
@@ -345,8 +416,10 @@ def main():
     print("SESSION SUMMARY")
     print("="*70)
     print(f"Final Occupancy: {summary['current_occupancy']} person(s)")
-    print(f"People Present: {', '.join(summary['people_present']) if summary['people_present'] else 'None'}")
-    print(f"Total Visitors: {summary['total_visitors_today']}")
+    print(f"Known People: {', '.join(summary['known_people']) if summary['known_people'] else 'None'}")
+    print(f"Unknown People: {summary['unknown_count']}")
+    print(f"Total Known Visitors: {summary['total_visitors_today']}")
+    print(f"Total Unknown Visitors: {summary['total_unknown_visitors']}")
     print("="*70)
 
 
