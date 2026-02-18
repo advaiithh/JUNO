@@ -216,10 +216,11 @@ Contributions are welcome! Feel free to:
 
 This project is open source and available under the MIT License.
 
-## 👨‍💻 Author
+## 👨‍💻 Authors
 
-**Advaith**
-- GitHub: [@advaiithh](https://github.com/advaiithh)
+**JUNO Development Team**
+- [@jinto-joseph](https://github.com/jinto-joseph)
+- [@advaiithh](https://github.com/advaiithh)
 
 ## 🙏 Acknowledgments
 
