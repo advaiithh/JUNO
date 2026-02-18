@@ -1,0 +1,26 @@
+# Face Recognition Requirements
+# Install with: pip install -r requirements_face_recognition.txt
+
+# Core dependencies
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Deep Learning Face Recognition (Choose ONE option):
+
+# OPTION 1: face_recognition (Recommended - Easy & Accurate)
+# Uses dlib's state-of-the-art ResNet-based face recognition
+# 128-dimensional face encodings
+face-recognition>=1.3.0
+dlib>=19.24.0
+
+# OPTION 2: InsightFace (Most Accurate - Professional Grade)
+# Uncomment below if you want the most accurate model
+# insightface>=0.7.3
+# onnxruntime>=1.16.0
+
+# OPTION 3: Hugging Face Transformers (Flexible)
+# Uncomment below for transformers-based approach
+# transformers>=4.35.0
+# torch>=2.0.0
+# torchvision>=0.15.0
+# timm>=0.9.0

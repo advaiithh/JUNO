@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Large Model Files
+buffalo_l/
+checkpoint/
+models/buffalo_l/
+*.onnx
+*.pth
+*.pkl
+
+# Audio files
+*.wav
+*.mp3
+
+# Test images
+test_photo_*.jpg
+test_photo_*.png
+
+# Logs
+logs/
+*.log
+
+# Memory/Cache
+memory/
+face_samples/
+
+# Piper voice models (too large)
+piper/voices/
+piper/*.onnx
+piper/*.dll
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
