@@ -261,10 +261,10 @@ def detect_people_bodies(frame):
     # Detect people
     bodies, weights = HOG_PERSON_DETECTOR.detectMultiScale(
         small_frame, 
+        hitThreshold=0,
         winStride=(8, 8),
         padding=(4, 4),
-        scale=1.05,
-        finalThreshold=1.5
+        scale=1.05
     )
     
     # Scale back to original size
