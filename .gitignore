@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Audio files (users generate their own)
+*.wav
+
+# User data
+conversation_memory.json
+piper_voice_config.json
+
+# Piper TTS (too large - users download separately)
+piper/piper.exe
+piper/*.dll
+piper/*.ort
+piper/espeak-ng-data/
+piper/voices/*.onnx
+piper/voices/*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Test files (not needed in repo)
+test_*.py
+*_test.py
+check_status.py
+fix_*.py
+
+# Extra documentation (not needed in repo)
+TESTING_GUIDE.py
+PERFORMANCE_GUIDE.py
+LIVE_VOICE_GUIDE.py
+VOICE_API_DOCS.md
+QUICKSTART.md
+START_HERE.md
+WEB_UI_GUIDE.md
+README.md
+
+# Old/unused files
+client.py
+audio_recorder.py
+stt.py
+tts.py
+live_voice_client.py
+recognition.py
+face_tracking.py
+voice_manager.py
+setup_*.py
+download_*.py
+generate_audio.py
+OPEN_JUNO.html
+
+# Build
+dist/
+build/
+*.egg-info/
