@@ -6,6 +6,12 @@ import time
 import json
 from datetime import datetime
 from collections import defaultdict
+import openvino as ov
+
+# Import DeepSORT utilities
+from deepsort_utils.tracker import Tracker
+from deepsort_utils.nn_matching import NearestNeighborDistanceMetric
+from deepsort_utils.detection import Detection, xywh_to_tlwh
 
 # Try to import face recognition libraries
 try:
@@ -30,10 +36,23 @@ except:
 # File paths
 REGISTERED_FACES_FILE = "registered_faces_advanced.pkl"
 OCCUPANCY_LOG_FILE = "logs/occupancy_log.json"
+PERSON_MODEL_XML = "models/person_detection/person-detection-retail-0013.xml"
 
-# Initialize HOG person detector
-HOG_PERSON_DETECTOR = cv2.HOGDescriptor()
-HOG_PERSON_DETECTOR.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+# Initialize OpenVINO person detector
+print("Loading OpenVINO person detection model...")
+core = ov.Core()
+person_model = core.read_model(model=PERSON_MODEL_XML)
+compiled_person_model = core.compile_model(model=person_model, device_name="CPU")
+person_input_layer = compiled_person_model.input(0)
+person_output_layer = compiled_person_model.output(0)
+
+# Initialize DeepSORT tracker
+max_cosine_distance = 0.4
+nn_budget = None
+metric = NearestNeighborDistanceMetric("cosine", max_cosine_distance, nn_budget)
+deepsort_tracker = Tracker(metric, max_iou_distance=0.7, max_age=30, n_init=3)
+
+print("✓ OpenVINO model loaded and ready!")
 
 class RoomOccupancyTracker:
     """Track people entering and exiting the room"""
@@ -254,25 +273,50 @@ def load_registered_people():
 
 
 def detect_people_bodies(frame):
-    """Detect full bodies/people even at distance using HOG"""
-    # Resize frame for faster detection
-    small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+    """Detect people using OpenVINO person detection model"""
+    # Get input shape
+    n, c, h, w = person_input_layer.shape
     
-    # Detect people
-    bodies, weights = HOG_PERSON_DETECTOR.detectMultiScale(
-        small_frame, 
-        hitThreshold=0,
-        winStride=(8, 8),
-        padding=(4, 4),
-        scale=1.05
-    )
+    # Preprocess frame
+    resized_frame = cv2.resize(frame, (w, h))
+    input_frame = np.expand_dims(resized_frame.transpose(2, 0, 1), 0)
     
-    # Scale back to original size
-    scaled_bodies = []
-    for (x, y, w, h) in bodies:
-        scaled_bodies.append((x*2, y*2, w*2, h*2))
+    # Run inference
+    results = compiled_person_model([input_frame])[person_output_layer]
     
-    return scaled_bodies
+    # Parse detections
+    # Output shape: [1, 1, N, 7] where N is number of detections
+    # Each detection: [image_id, label, conf, x_min, y_min, x_max, y_max]
+    detections = []
+    frame_height, frame_width = frame.shape[:2]
+    
+    detection_count = 0
+    for detection in results[0][0]:
+        confidence = detection[2]
+        if confidence > 0.3:  # Lowered confidence threshold for better detection
+            detection_count += 1
+            x_min = int(detection[3] * frame_width)
+            y_min = int(detection[4] * frame_height)
+            x_max = int(detection[5] * frame_width)
+            y_max = int(detection[6] * frame_height)
+            
+            # Convert to (x, y, w, h) format
+            x = x_min
+            y = y_min
+            w = x_max - x_min
+            h = y_max - y_min
+            
+            # Validate bounding box
+            if w > 20 and h > 40:  # Minimum size filter
+                detections.append((x, y, w, h, confidence))
+    
+    # Debug: Print detection count periodically
+    if detection_count > 0:
+        print(f"[DEBUG] Detected {detection_count} people with confidence > 0.3")
+    
+    return detections
+    
+    return detections
 
 
 def detect_faces_simple(frame):
@@ -377,8 +421,14 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
+    actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    print(f"✓ Camera opened: {int(actual_width)}x{int(actual_height)}")
+    print("  Detection confidence threshold: 0.3")
+    print("  Processing every 3rd frame\n")
+    
     frame_count = 0
-    process_every_n_frames = 5  # Process every 5th frame
+    process_every_n_frames = 3  # Process every 3rd frame (more frequent)
     
     while True:
         ret, frame = cap.read()
@@ -389,77 +439,89 @@ def main():
         
         # Process recognition every N frames
         if frame_count % process_every_n_frames == 0:
-            # Detect faces
-            face_locations = detect_faces_simple(frame)
-            
-            # Detect bodies (people at distance)
+            # Detect bodies/people using OpenVINO (PRIMARY DETECTION)
             body_locations = detect_people_bodies(frame)
             
             detected_people = set()
-            unknown_face_id = 0
-            body_id = 0
             
-            # Process face detections first (higher priority)
-            for face_location in face_locations:
-                top, right, bottom, left = face_location
+            # Update DeepSORT tracker with body detections
+            if body_locations:
+                # Create Detection objects for DeepSORT
+                detections_list = []
+                for (x, y, w, h, confidence) in body_locations:
+                    # Convert to tlwh format for DeepSORT
+                    bbox = [x, y, w, h]
+                    # Use simple feature vector (position + size normalized)
+                    feature = np.array([x/frame.shape[1], y/frame.shape[0], 
+                                       w/frame.shape[1], h/frame.shape[0]])
+                    detection = Detection(bbox, confidence, feature)
+                    detections_list.append(detection)
                 
-                # Extract encoding
-                encoding = extract_face_encoding_simple(frame, face_location)
+                # Update tracker
+                deepsort_tracker.predict()
+                deepsort_tracker.update(detections_list)
                 
-                if encoding is not None:
-                    # Recognize person
-                    person_name, distance = recognize_person(encoding, all_people)
+                # Draw tracked people (HUMAN DETECTION - BODY BOXES)
+                for track in deepsort_tracker.tracks:
+                    if not track.is_confirmed() or track.time_since_update > 1:
+                        continue
                     
-                    if person_name:
-                        detected_people.add(person_name)
-                        status = tracker.person_detected(person_name)
+                    bbox = track.to_tlbr()
+                    x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                    
+                    # Extract the person's region for face recognition (optional identification)
+                    person_roi = frame[max(0,y1):min(frame.shape[0],y2), 
+                                      max(0,x1):min(frame.shape[1],x2)]
+                    
+                    person_name = None
+                    if person_roi.size > 0:
+                        # Try to detect face inside body box for identification
+                        face_locations = detect_faces_simple(person_roi)
                         
-                        # Draw rectangle and name
-                        color = (0, 255, 0) if status == "ENTERED" else (0, 200, 0)
-                        cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
-                        cv2.putText(frame, person_name, (left, top-10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
-                        cv2.putText(frame, f"Dist: {distance:.3f}", (left, bottom+25),
+                        if face_locations:
+                            # Get the largest face (closest to camera)
+                            face_location = face_locations[0]
+                            top, right, bottom, left = face_location
+                            
+                            # Adjust coordinates relative to full frame
+                            face_top = y1 + top
+                            face_left = x1 + left
+                            face_bottom = y1 + bottom
+                            face_right = x1 + right
+                            
+                            # Extract encoding for identification
+                            encoding = extract_face_encoding_simple(frame, 
+                                (face_top, face_right, face_bottom, face_left))
+                            
+                            if encoding is not None:
+                                # Recognize person
+                                person_name, distance = recognize_person(encoding, all_people)
+                                
+                                if person_name:
+                                    detected_people.add(person_name)
+                                    status = tracker.person_detected(person_name)
+                                    
+                                    # Draw BODY rectangle with identified name
+                                    color = (0, 255, 0) if status == "ENTERED" else (0, 200, 0)
+                                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+                                    cv2.putText(frame, f"{person_name} (ID:{track.track_id})", 
+                                               (x1, y1-10),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                                    cv2.putText(frame, f"Confidence: {distance:.3f}", 
+                                               (x1, y2+25),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                                    continue
+                    
+                    # If no face or unknown person - show as generic human detection
+                    if person_name is None:
+                        tracker.body_detected(track.track_id)
+                        
+                        # Draw BODY rectangle for detected human
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 0), 3)
+                        cv2.putText(frame, f"Person ID:{track.track_id}", (x1, y1-10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 2)
+                        cv2.putText(frame, "Human Detected", (x1, y2+25),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                    else:
-                        # Unknown person - track them too
-                        unknown_face_id += 1
-                        tracker.unknown_person_detected(unknown_face_id)
-                        
-                        cv2.rectangle(frame, (left, top), (right, bottom), (0, 165, 255), 2)
-                        cv2.putText(frame, f"Unknown #{unknown_face_id}", (left, top-10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
-                        cv2.putText(frame, "Counting in occupancy", (left, bottom+25),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                else:
-                    # Face detected but no encoding - still count it
-                    cv2.rectangle(frame, (left, top), (right, bottom), (128, 128, 128), 2)
-                    cv2.putText(frame, "Detected", (left, top-10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
-            
-            # Process body detections (people at distance without clear face)
-            for (x, y, w, h) in body_locations:
-                # Check if this body overlaps with any detected face
-                is_overlapping = False
-                for face_location in face_locations:
-                    face_top, face_right, face_bottom, face_left = face_location
-                    # Check if body area contains this face
-                    if (face_left >= x and face_right <= x+w and 
-                        face_top >= y and face_bottom <= y+h):
-                        is_overlapping = True
-                        break
-                
-                # Only count body if no face was detected in this area
-                if not is_overlapping:
-                    body_id += 1
-                    tracker.body_detected(body_id)
-                    
-                    # Draw body rectangle
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
-                    cv2.putText(frame, f"Person #{body_id}", (x, y-10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                    cv2.putText(frame, "(Body Detection)", (x, y+h+25),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
             # Check for exits
             tracker.check_exits()
@@ -471,11 +533,18 @@ def main():
         body_count = len(tracker.detected_bodies)
         
         # Occupancy counter
-        cv2.rectangle(frame, (10, 10), (450, 180), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (450, 180), (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 10), (450, 200), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (450, 200), (255, 255, 255), 2)
         
-        cv2.putText(frame, f"TOTAL OCCUPANCY: {occupancy}", (20, 45),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+        # Show detection status
+        if occupancy == 0:
+            cv2.putText(frame, f"TOTAL OCCUPANCY: {occupancy}", (20, 45),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (128, 128, 128), 3)
+            cv2.putText(frame, "[Scanning for humans...]", (20, 190),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
+        else:
+            cv2.putText(frame, f"TOTAL OCCUPANCY: {occupancy}", (20, 45),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
         
         # Show known people
         if known_people:
@@ -488,24 +557,22 @@ def main():
             cv2.putText(frame, "Known: None", (20, 85),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
         
-        # Show unknown count
-        if unknown_count > 0:
-            cv2.putText(frame, f"Unknown Faces: {unknown_count}", (20, 115),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-        else:
-            cv2.putText(frame, "Unknown Faces: 0", (20, 115),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
-        
-        # Show body-only detections
-        if body_count > 0:
-            cv2.putText(frame, f"Distant People: {body_count}", (20, 145),
+        # Show unidentified humans count
+        total_unidentified = unknown_count + body_count
+        if total_unidentified > 0:
+            cv2.putText(frame, f"Unidentified Humans: {total_unidentified}", (20, 115),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         else:
-            cv2.putText(frame, "Distant People: 0", (20, 145),
+            cv2.putText(frame, "Unidentified Humans: 0", (20, 115),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 128), 2)
         
-        # Total visitors
-        cv2.putText(frame, f"Total: {tracker.total_visitors}K + {tracker.total_unknown_visitors}U + {tracker.total_body_detections}D", (20, 170),
+        # Detection method info
+        cv2.putText(frame, "[OpenVINO Human Detection]", (20, 145),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 200, 255), 1)
+        
+        # Total humans detected (all sessions)
+        total_all_humans = tracker.total_visitors + tracker.total_unknown_visitors + tracker.total_body_detections
+        cv2.putText(frame, f"Total Humans Detected: {total_all_humans}", (20, 170),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         
         # Instructions

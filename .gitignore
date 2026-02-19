@@ -16,9 +16,12 @@ venv.bak/
 buffalo_l/
 checkpoint/
 models/buffalo_l/
+models/person_detection/
 *.onnx
 *.pth
 *.pkl
+*.xml
+*.bin
 
 # Audio files
 *.wav
