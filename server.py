@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import requests
@@ -11,11 +11,22 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime
+import cv2
+import numpy as np
 
 # Ensure UTF-8 encoding for Windows console
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
+
+# Import face authentication module
+try:
+    from face_auth import verify_owner, capture_and_verify
+    FACE_AUTH_AVAILABLE = True
+    print("[OK] Face authentication module loaded")
+except Exception as e:
+    FACE_AUTH_AVAILABLE = False
+    print(f"[WARNING] Face authentication not available: {e}")
 
 try:
     from faster_whisper import WhisperModel
@@ -46,6 +57,9 @@ ui_path = Path(__file__).parent / "ui"
 if ui_path.exists():
     app.mount("/ui", StaticFiles(directory=str(ui_path), html=True), name="ui")
     print(f"[OK] Web UI available at: http://localhost:8000/ui/index.html")
+
+# Authentication state
+authenticated_users = {}  # Store authenticated session tokens
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -224,6 +238,107 @@ def synthesize_speech(text, output_file="response.wav"):
         return None, "TTS synthesis timed out"
     except Exception as e:
         return None, f"TTS error: {str(e)}"
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@app.post("/auth/verify_frame")
+async def verify_frame(file: UploadFile = File(...)):
+    """
+    Verify owner from uploaded frame image
+    """
+    if not FACE_AUTH_AVAILABLE:
+        return JSONResponse(
+            status_code=503,
+            content={"authenticated": False, "message": "Face authentication not available"}
+        )
+    
+    try:
+        # Read uploaded image
+        content = await file.read()
+        nparr = np.frombuffer(content, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return {"authenticated": False, "confidence": 0, "message": "Invalid image"}
+        
+        # Verify owner
+        is_auth, confidence, message = verify_owner(frame)
+        
+        # Generate session token if authenticated
+        session_token = None
+        if is_auth:
+            import uuid
+            session_token = str(uuid.uuid4())
+            authenticated_users[session_token] = {
+                "timestamp": datetime.now().isoformat(),
+                "confidence": confidence
+            }
+        
+        return {
+            "authenticated": is_auth,
+            "confidence": round(confidence, 1),
+            "message": message,
+            "session_token": session_token
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"authenticated": False, "message": f"Error: {str(e)}"}
+        )
+
+
+@app.post("/auth/quick_verify")
+async def quick_verify():
+    """
+    Quick camera capture and verify (for testing)
+    """
+    if not FACE_AUTH_AVAILABLE:
+        return JSONResponse(
+            status_code=503,
+            content={"authenticated": False, "message": "Face authentication not available"}
+        )
+    
+    try:
+        is_auth, confidence, message, frame = capture_and_verify(timeout=3)
+        
+        # Generate session token if authenticated
+        session_token = None
+        if is_auth:
+            import uuid
+            session_token = str(uuid.uuid4())
+            authenticated_users[session_token] = {
+                "timestamp": datetime.now().isoformat(),
+                "confidence": confidence
+            }
+        
+        return {
+            "authenticated": is_auth,
+            "confidence": round(confidence, 1),
+            "message": message,
+            "session_token": session_token
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"authenticated": False, "message": f"Error: {str(e)}"}
+        )
+
+
+@app.get("/auth/check_session")
+async def check_session(token: str):
+    """
+    Check if session token is valid
+    """
+    if token in authenticated_users:
+        return {
+            "valid": True,
+            "authenticated_at": authenticated_users[token]["timestamp"],
+            "confidence": authenticated_users[token]["confidence"]
+        }
+    return {"valid": False}
+
+
+# ==================== CHAT ENDPOINTS ====================
 
 @app.post("/chat")
 async def chat(request: dict):
@@ -426,14 +541,17 @@ def status():
         "tts_available": TTS_AVAILABLE,
         "tts_voice": PIPER_VOICE.split('/')[-1] if TTS_AVAILABLE else None,
         "llm_url": OLLAMA_URL,
-        "conversation_history_size": len(conversation_history)
+        "face_auth_available": FACE_AUTH_AVAILABLE,
+        "conversation_history_size": len(conversation_history),
+        "authenticated_sessions": len(authenticated_users)
     }
 
 if __name__ == "__main__":
     import uvicorn
     print("\n" + "="*60)
-    print(" JUNO - AI Voice Assistant Server")
+    print(" JUNO - AI Voice Assistant Server with Face Authentication")
     print("="*60)
+    print(f" Face Auth: {'[OK] Available' if FACE_AUTH_AVAILABLE else '[WARNING] Not available'}")
     print(f" STT: {'[OK] Available' if STT_AVAILABLE else '[ERROR] Not available'}")
     print(f" TTS: {'[OK] Available' if TTS_AVAILABLE else '[ERROR] Not available'}")
     print(f" LLM: {OLLAMA_URL}")
@@ -441,7 +559,11 @@ if __name__ == "__main__":
     print(" Server URLs:")
     print("   • API:    http://localhost:8000")
     print("   • Web UI: http://localhost:8000/ui/index.html")
-    print("="*60 + "\n")
+    print("="*60)
+    if FACE_AUTH_AVAILABLE:
+        print("\n ℹ️  Face Authentication Enabled:")
+        print("   Users must verify their face before using voice assistant")
+        print("   Register faces using: python recognition_advanced.py")
+    print("\n" + "="*60 + "\n")
     
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

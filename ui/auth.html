@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JUNO - Face Authentication</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            max-width: 480px;
+            margin: 0 auto 20px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        #video {
+            width: 100%;
+            display: block;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 1.1em;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        #startBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #startBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        #startBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #verifyBtn {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: white;
+            display: none;
+        }
+
+        #verifyBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(74, 222, 128, 0.4);
+        }
+
+        #status {
+            padding: 15px;
+            border-radius: 12px;
+            margin: 20px 0;
+            font-weight: 500;
+            display: none;
+        }
+
+        #status.info {
+            background: #dbeafe;
+            color: #1e40af;
+            display: block;
+        }
+
+        #status.success {
+            background: #d1fae5;
+            color: #065f46;
+            display: block;
+        }
+
+        #status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            display: block;
+        }
+
+        #status.warning {
+            background: #fef3c7;
+            color: #92400e;
+            display: block;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s linear infinite;
+            vertical-align: middle;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .instructions {
+            background: #f3f4f6;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            text-align: left;
+        }
+
+        .instructions h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .instructions ul {
+            list-style-position: inside;
+            color: #666;
+        }
+
+        .instructions li {
+            margin: 8px 0;
+        }
+
+        #proceedBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            font-size: 1.2em;
+            display: none;
+            margin: 20px auto;
+        }
+
+        #proceedBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .face-outline {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 250px;
+            border: 3px dashed rgba(102, 126, 234, 0.5);
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎭 JUNO Face Authentication</h1>
+        <p class="subtitle">Verify your identity to access JUNO</p>
+
+        <div class="instructions">
+            <h3>📋 Instructions</h3>
+            <ul>
+                <li>Click "Start Camera" to begin</li>
+                <li>Position your face in the center</li>
+                <li>Ensure good lighting</li>
+                <li>Look directly at the camera</li>
+                <li>Click "Verify Face" when ready</li>
+            </ul>
+        </div>
+
+        <div id="videoContainer">
+            <video id="video" autoplay></video>
+            <div class="face-outline"></div>
+        </div>
+        <canvas id="canvas"></canvas>
+
+        <div class="button-container">
+            <button id="startBtn">📷 Start Camera</button>
+            <button id="verifyBtn">✓ Verify Face</button>
+        </div>
+
+        <div id="status"></div>
+
+        <button id="proceedBtn">Continue to JUNO →</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const verifyBtn = document.getElementById('verifyBtn');
+        const proceedBtn = document.getElementById('proceedBtn');
+        const status = document.getElementById('status');
+        
+        let stream = null;
+        let sessionToken = null;
+
+        // Start camera
+        startBtn.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: 640, 
+                        height: 480,
+                        facingMode: 'user'
+                    } 
+                });
+                video.srcObject = stream;
+                
+                startBtn.disabled = true;
+                startBtn.textContent = '📷 Camera Active';
+                verifyBtn.style.display = 'inline-block';
+                
+                showStatus('Camera started. Position your face and click "Verify Face"', 'info');
+            } catch (error) {
+                showStatus('Error: Could not access camera. Please allow camera permissions.', 'error');
+                console.error('Camera error:', error);
+            }
+        });
+
+        // Verify face
+        verifyBtn.addEventListener('click', async () => {
+            if (!stream) {
+                showStatus('Please start the camera first', 'warning');
+                return;
+            }
+
+            verifyBtn.disabled = true;
+            verifyBtn.innerHTML = 'Verifying... <span class="loading"></span>';
+            
+            try {
+                // Capture frame from video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+                
+                // Convert canvas to blob
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+                
+                // Send to server
+                const formData = new FormData();
+                formData.append('file', blob, 'face.jpg');
+                
+                const response = await fetch('/auth/verify_frame', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.authenticated) {
+                    sessionToken = result.session_token;
+                    showStatus(
+                        `✓ Authentication Successful! (Confidence: ${result.confidence}%) - ${result.message}`,
+                        'success'
+                    );
+                    
+                    // Stop camera
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop());
+                        video.srcObject = null;
+                    }
+                    
+                    // Show proceed button
+                    proceedBtn.style.display = 'block';
+                    verifyBtn.style.display = 'none';
+                    startBtn.style.display = 'none';
+                } else {
+                    showStatus(
+                        `✗ Authentication Failed: ${result.message}. Please try again.`,
+                        'error'
+                    );
+                    verifyBtn.disabled = false;
+                    verifyBtn.textContent = '✓ Verify Face';
+                }
+            } catch (error) {
+                showStatus(`Error during verification: ${error.message}`, 'error');
+                verifyBtn.disabled = false;
+                verifyBtn.textContent = '✓ Verify Face';
+                console.error('Verification error:', error);
+            }
+        });
+
+        // Proceed to main app
+        proceedBtn.addEventListener('click', () => {
+            if (sessionToken) {
+                // Store session token and redirect
+                sessionStorage.setItem('juno_session', sessionToken);
+                window.location.href = 'index.html';
+            }
+        });
+
+        // Helper function to show status messages
+        function showStatus(message, type) {
+            status.textContent = message;
+            status.className = type;
+        }
+
+        // Check if already authenticated
+        window.addEventListener('load', async () => {
+            const existingToken = sessionStorage.getItem('juno_session');
+            if (existingToken) {
+                try {
+                    const response = await fetch(`/auth/check_session?token=${existingToken}`);
+                    const result = await response.json();
+                    
+                    if (result.valid) {
+                        showStatus('Already authenticated! Redirecting...', 'success');
+                        setTimeout(() => {
+                            window.location.href = 'index.html';
+                        }, 1500);
+                    }
+                } catch (error) {
+                    console.error('Session check error:', error);
+                }
+            }
+        });
+    </script>
+</body>
+</html>

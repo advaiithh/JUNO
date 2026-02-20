@@ -775,19 +775,57 @@
             }
         }
 
-        // Initialize
-        checkStatus();
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (event) => {
-            if (event.code === 'Space' && !isRecording) {
-                event.preventDefault();
-                startRecording();
-            } else if (event.code === 'Space' && isRecording) {
-                event.preventDefault();
-                stopRecording();
+        // Check authentication
+        async function checkAuthentication() {
+            const sessionToken = sessionStorage.getItem('juno_session');
+            
+            // Check if face auth is available
+            try {
+                const statusResponse = await fetch('/status');
+                const statusData = await statusResponse.json();
+                
+                // If face auth not available, skip check
+                if (!statusData.face_auth_available) {
+                    console.log('Face authentication not enabled');
+                    return true;
+                }
+            } catch (error) {
+                console.log('Cannot check authentication status');
+                return true;
             }
-        });
-    </script>
-</body>
-</html>
+            
+            // If no token, redirect to auth page
+            if (!sessionToken) {
+                window.location.href = 'auth.html';
+                return false;
+            }
+            
+            // Verify token is still valid
+            try {
+                const response = await fetch(`/auth/check_session?token=${sessionToken}`);
+                const result = await response.json();
+                
+                if (!result.valid) {
+                    sessionStorage.removeItem('juno_session');
+                    window.location.href = 'auth.html';
+                    return false;
+                }
+                
+                console.log('✓ Authenticated session verified');
+                return true;
+            } catch (error) {
+                console.error('Session verification error:', error);
+                // Allow access if cannot verify (server might not have auth module)
+                return true;
+            }
+        }
+
+        // Initialize
+        async function initialize() {
+            const authenticated = await checkAuthentication();
+            if (authenticated) {
+                checkStatus();
+            }
+        }
+        
+        initialize();
