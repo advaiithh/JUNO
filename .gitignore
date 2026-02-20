@@ -11,6 +11,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv
 
 # Large Model Files
 buffalo_l/
@@ -31,6 +32,18 @@ models/person_detection/
 test_photo_*.jpg
 test_photo_*.png
 
+# User data
+conversation_memory.json
+piper_voice_config.json
+
+# Piper TTS (too large - users download separately)
+piper/piper.exe
+piper/*.dll
+piper/*.ort
+piper/espeak-ng-data/
+piper/voices/*.onnx
+piper/voices/*.json
+
 # Logs
 logs/
 *.log
@@ -39,17 +52,49 @@ logs/
 memory/
 face_samples/
 
-# Piper voice models (too large)
-piper/voices/
-piper/*.onnx
-piper/*.dll
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Test files (not needed in repo)
+test_*.py
+*_test.py
+check_status.py
+fix_*.py
+
+# Extra documentation (not needed in repo)
+TESTING_GUIDE.py
+PERFORMANCE_GUIDE.py
+LIVE_VOICE_GUIDE.py
+VOICE_API_DOCS.md
+QUICKSTART.md
+START_HERE.md
+WEB_UI_GUIDE.md
+README.md
+
+# Old/unused files
+client.py
+audio_recorder.py
+stt.py
+tts.py
+live_voice_client.py
+recognition.py
+face_tracking.py
+voice_manager.py
+setup_*.py
+download_*.py
+generate_audio.py
+OPEN_JUNO.html
+
+# Build
+dist/
+build/
+*.egg-info/

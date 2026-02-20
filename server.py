@@ -1,29 +1,52 @@
+# -*- coding: utf-8 -*-
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 import requests
 import os
+import sys
 import json
 import subprocess
 import tempfile
 from pathlib import Path
+from datetime import datetime
+
+# Ensure UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 
 try:
     from faster_whisper import WhisperModel
     STT_AVAILABLE = True
-    # Use CPU-only to avoid GPU/CUDA issues
-    try:
-        stt_model = WhisperModel("small", device="cpu", compute_type="int8")
-    except:
-        # Fallback to even smaller model
-        stt_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+    # Use BASE model for better accuracy with good speed (2-3s for typical audio)
+    stt_model = WhisperModel("base", device="cpu", compute_type="int8", num_workers=4)
+    print("[OK] Whisper model loaded: BASE (balanced accuracy & speed)")
 except ImportError:
     STT_AVAILABLE = False
-    print("⚠ Warning: faster_whisper not installed. STT features disabled.")
+    print("[WARNING] faster_whisper not installed. STT features disabled.")
 except Exception as e:
     STT_AVAILABLE = False
-    print(f"⚠ Warning: Could not load Whisper model: {e}")
+    print(f"[WARNING] Could not load Whisper model: {e}")
 
 app = FastAPI()
+
+# Enable CORS for web UI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files for web UI
+ui_path = Path(__file__).parent / "ui"
+if ui_path.exists():
+    app.mount("/ui", StaticFiles(directory=str(ui_path), html=True), name="ui")
+    print(f"[OK] Web UI available at: http://localhost:8000/ui/index.html")
+
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 PIPER_EXE = "piper/piper.exe"
@@ -50,68 +73,122 @@ PIPER_VOICE = get_active_voice()
 TTS_AVAILABLE = os.path.exists(PIPER_EXE) and os.path.exists(PIPER_VOICE)
 
 if TTS_AVAILABLE:
-    print(f"✓ TTS Voice loaded: {PIPER_VOICE}")
+    print(f"[OK] TTS Voice loaded: {PIPER_VOICE}")
 else:
-    print(f"⚠ TTS not available - Voice file missing: {PIPER_VOICE}")
+    print(f"[WARNING] TTS not available - Voice file missing: {PIPER_VOICE}")
 
+# Conversation memory persistence
+MEMORY_FILE = "conversation_memory.json"
 conversation_history = []
-MAX_HISTORY = 10
+MAX_HISTORY = 20  # Increased to remember more context
 
-def call_llm(prompt, tokens=150):
-    response = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": "llama3.1:8b",
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_predict": tokens}
-        }
-    )
-    return response.json()["response"]
+def load_conversation_memory():
+    """Load conversation history from file"""
+    global conversation_history
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
+                conversation_history = json.load(f)
+            print(f"[OK] Loaded {len(conversation_history)} messages from memory")
+        except Exception as e:
+            print(f"[WARNING] Could not load memory: {e}")
+            conversation_history = []
+    else:
+        conversation_history = []
 
-def classify_intent(text):
-    classification_prompt = f"""
-    You are an intent classifier.
-    Return ONLY valid JSON.
+def save_conversation_memory():
+    """Save conversation history to file"""
+    try:
+        with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(conversation_history, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[WARNING] Could not save memory: {e}")
 
-    Possible intents:
-    - general_query
-    - open_notepad
-    - unknown
+# Load existing memory on startup
+load_conversation_memory()
 
-    Format:
-    {{
-      "intent": "intent_name",
-      "action_required": true or false
-    }}
+# Simple command processor
+def process_command(text):
+    """Check if text is a system command"""
+    text_lower = text.lower().strip()
+    
+    # Time commands
+    if any(word in text_lower for word in ["time", "clock", "what time"]):
+        current_time = datetime.now().strftime("%I:%M %p")
+        return True, f"The current time is {current_time}"
+    
+    # Date commands
+    if any(word in text_lower for word in ["date", "today", "what day"]):
+        current_date = datetime.now().strftime("%B %d, %Y")
+        return True, f"Today is {current_date}"
+    
+    # Clear memory
+    if "clear memory" in text_lower or "forget everything" in text_lower:
+        return True, "CLEAR_MEMORY"
+    
+    return False, None
 
-    Input: {text}
-    """
-
-    result = call_llm(classification_prompt, tokens=80)
-    return result
-
-def execute_action(intent):
-    if intent == "open_notepad":
-        os.system("notepad")
-        return "Opening Notepad."
-    return None
+def call_llm(prompt, tokens=100):
+    """Call LLM with optimized settings for speed"""
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": "llama3.1:8b",
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "num_predict": tokens,
+                    "temperature": 0.7,
+                    "top_k": 40,
+                    "top_p": 0.9,
+                    "num_ctx": 2048  # Reduced context window for speed
+                }
+            },
+            timeout=30  # Increased timeout for initial model load
+        )
+        if response.status_code == 200:
+            return response.json()["response"]
+        else:
+            return f"LLM Error: {response.status_code}. Make sure Ollama is running."
+    except requests.exceptions.Timeout:
+        return "[WARNING]️ LLM timeout. First request may be slow while loading model. Try again."
+    except requests.exceptions.ConnectionError:
+        return "[WARNING]️ Cannot connect to Ollama. Please start it with: 'ollama serve'"
+    except Exception as e:
+        return f"[WARNING]️ LLM Error: {str(e)}"
 
 def transcribe_audio(audio_path):
     """
-    Convert audio file to text using faster_whisper
+    Convert audio file to text using faster_whisper with optimizations
     """
     if not STT_AVAILABLE:
         return None, "STT not available. Install faster_whisper."
     
     try:
-        segments, info = stt_model.transcribe(audio_path)
+        # Optimized transcription settings for better accuracy
+        segments, info = stt_model.transcribe(
+            audio_path,
+            beam_size=7,  # Higher beam search for better accuracy
+            vad_filter=True,  # Filter out non-speech
+            vad_parameters=dict(
+                min_silence_duration_ms=500,  # Faster VAD
+                threshold=0.5  # More sensitive voice detection
+            ),
+            condition_on_previous_text=True,  # Use context for better accuracy
+            temperature=0.0  # Deterministic output (most accurate)
+        )
         text = ""
         for segment in segments:
             text += segment.text + " "
-        return text.strip(), None
+        
+        result = text.strip()
+        print(f"[OK] Transcribed: '{result[:50]}...' (length: {len(result)})")
+        return result, None
     except Exception as e:
+        print(f"[ERROR] Transcription error: {str(e)}")
         return None, f"Transcription error: {str(e)}"
+
 
 def synthesize_speech(text, output_file="response.wav"):
     """
@@ -121,13 +198,24 @@ def synthesize_speech(text, output_file="response.wav"):
         return None, "TTS not available. Install Piper."
     
     try:
+        # Use absolute path for file creation
+        abs_output_file = os.path.abspath(output_file)
+        
+        # Delete old file if it exists to prevent playback overlap
+        if os.path.exists(abs_output_file):
+            try:
+                os.remove(abs_output_file)
+            except:
+                pass  # Continue even if delete fails
+        
         result = subprocess.run([
             PIPER_EXE,
             "--model", PIPER_VOICE,
-            "--output_file", output_file
+            "--output_file", abs_output_file
         ], input=text.encode(), capture_output=True, timeout=30)
         
-        if result.returncode == 0 and os.path.exists(output_file):
+        if result.returncode == 0 and os.path.exists(abs_output_file):
+            # Return just the filename, not full path
             return output_file, None
         else:
             error_msg = result.stderr.decode() if result.stderr else "Unknown error"
@@ -138,41 +226,44 @@ def synthesize_speech(text, output_file="response.wav"):
         return None, f"TTS error: {str(e)}"
 
 @app.post("/chat")
-def chat(prompt: str):
-
+async def chat(request: dict):
+    """Optimized chat with command detection"""
     global conversation_history
+    
+    prompt = request.get("message", "")
+    if not prompt:
+        return {"error": "No message provided", "response": None, "audio_path": None}
 
-    # Step 1: Intent classification
-    intent_result = classify_intent(prompt)
+    # Step 1: Check if it's a system command (FAST pattern matching)
+    is_command, command_response = process_command(prompt)
+    
+    if is_command:
+        reply = command_response
+    else:
+        # Step 2: Normal conversation with LLM
+        conversation_history.append({"role": "user", "content": prompt})
 
-    try:
-        intent_json = json.loads(intent_result)
-        intent = intent_json["intent"]
-        action_required = intent_json["action_required"]
-    except:
-        intent = "general_query"
-        action_required = False
+        if len(conversation_history) > MAX_HISTORY:
+            conversation_history = conversation_history[-MAX_HISTORY:]
 
-    # Step 2: Execute action if required
-    if action_required:
-        action_response = execute_action(intent)
-        return {"reply": action_response}
+        # Build compact prompt
+        full_prompt = ""
+        for msg in conversation_history:
+            full_prompt += f"{msg['role']}: {msg['content']}\n"
+        full_prompt += "assistant:"
 
-    # Step 3: Normal conversation
-    conversation_history.append({"role": "user", "content": prompt})
+        reply = call_llm(full_prompt, tokens=80)  # Reduced tokens for faster response
 
-    if len(conversation_history) > MAX_HISTORY:
-        conversation_history = conversation_history[-MAX_HISTORY:]
+        conversation_history.append({"role": "assistant", "content": reply})
+        save_conversation_memory()  # Save after each exchange
 
-    full_prompt = ""
-    for msg in conversation_history:
-        full_prompt += f"{msg['role']}: {msg['content']}\n"
+    # Generate audio if TTS is available
+    audio_file = None
+    if TTS_AVAILABLE:
+        audio_file, _ = synthesize_speech(reply)
 
-    reply = call_llm(full_prompt)
+    return {"response": reply, "audio_path": audio_file, "command_executed": is_command}
 
-    conversation_history.append({"role": "assistant", "content": reply})
-
-    return {"reply": reply}
 
 @app.post("/stt")
 async def transcribe(file: UploadFile = File(...)):
@@ -228,46 +319,48 @@ async def voice_chat(file: UploadFile = File(...)):
     global conversation_history
     
     if not STT_AVAILABLE:
-        return {"error": "STT not available", "text": None, "reply": None, "audio_file": None}
+        return {"error": "STT not available", "transcript": None, "response": None, "audio_path": None}
     
     try:
-        # Step 1: Transcribe audio
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        # Step 1: Transcribe audio (handle both WAV and WebM)
+        file_ext = ".webm" if file.content_type == "audio/webm" else ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
             content = await file.read()
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
         user_text, stt_error = transcribe_audio(tmp_path)
-        os.unlink(tmp_path)
         
-        if stt_error:
-            return {"error": stt_error, "text": None, "reply": None, "audio_file": None}
-        
-        # Step 2: Classify intent and generate response
-        intent_result = classify_intent(user_text)
+        # Clean up temp file
         try:
-            intent_json = json.loads(intent_result)
-            intent = intent_json["intent"]
-            action_required = intent_json["action_required"]
+            os.unlink(tmp_path)
         except:
-            intent = "general_query"
-            action_required = False
+            pass
         
-        if action_required:
-            reply = execute_action(intent)
+        if stt_error or not user_text:
+            return {"error": stt_error or "No speech detected", "transcript": None, "response": None, "audio_path": None}
+        
+        # Step 2: Check for commands (FAST pattern matching, no LLM)
+        is_command, command_response = process_command(user_text)
+        
+        if is_command:
+            reply = command_response
         else:
-            # Normal conversation
+            # Normal conversation with LLM
             conversation_history.append({"role": "user", "content": user_text})
             
             if len(conversation_history) > MAX_HISTORY:
                 conversation_history = conversation_history[-MAX_HISTORY:]
             
+            # Build compact prompt
             full_prompt = ""
             for msg in conversation_history:
                 full_prompt += f"{msg['role']}: {msg['content']}\n"
+            full_prompt += "assistant:"
             
-            reply = call_llm(full_prompt)
+            reply = call_llm(full_prompt, tokens=80)  # Reduced for speed
             conversation_history.append({"role": "assistant", "content": reply})
+            save_conversation_memory()  # Save after each exchange
         
         # Step 3: Convert response to speech
         audio_file = None
@@ -277,13 +370,50 @@ async def voice_chat(file: UploadFile = File(...)):
             audio_file, tts_error = synthesize_speech(reply)
         
         return {
-            "text": user_text,
-            "reply": reply,
-            "audio_file": audio_file,
+            "transcript": user_text,
+            "response": reply,
+            "audio_path": audio_file,
             "tts_error": tts_error
         }
     except Exception as e:
-        return {"error": str(e), "text": None, "reply": None, "audio_file": None}
+        print(f"Error in voice_chat: {e}")
+        return {"error": str(e), "transcript": None, "response": None, "audio_path": None}
+
+@app.get("/")
+def root():
+    """Redirect to web UI"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/ui/index.html")
+
+@app.get("/audio/{filename}")
+def get_audio(filename: str):
+    """Serve audio files from workspace directory"""
+    # Look in the current working directory
+    file_path = Path.cwd() / filename
+    if file_path.exists():
+        return FileResponse(str(file_path), media_type="audio/wav")
+    # Fallback: try as absolute path
+    fallback_path = Path(filename)
+    if fallback_path.exists():
+        return FileResponse(str(fallback_path), media_type="audio/wav")
+    return {"error": f"File not found: {filename}"}
+
+@app.get("/memory")
+def get_memory():
+    """Get conversation history"""
+    return {
+        "history": conversation_history,
+        "count": len(conversation_history)
+    }
+
+@app.post("/memory/clear")
+def clear_memory():
+    """Clear conversation history"""
+    global conversation_history
+    conversation_history = []
+    save_conversation_memory()
+    return {"message": "Memory cleared", "count": 0}
+
 
 @app.get("/status")
 def status():
@@ -298,3 +428,20 @@ def status():
         "llm_url": OLLAMA_URL,
         "conversation_history_size": len(conversation_history)
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    print("\n" + "="*60)
+    print(" JUNO - AI Voice Assistant Server")
+    print("="*60)
+    print(f" STT: {'[OK] Available' if STT_AVAILABLE else '[ERROR] Not available'}")
+    print(f" TTS: {'[OK] Available' if TTS_AVAILABLE else '[ERROR] Not available'}")
+    print(f" LLM: {OLLAMA_URL}")
+    print("="*60)
+    print(" Server URLs:")
+    print("   • API:    http://localhost:8000")
+    print("   • Web UI: http://localhost:8000/ui/index.html")
+    print("="*60 + "\n")
+    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
