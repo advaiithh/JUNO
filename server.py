@@ -9,6 +9,7 @@ import sys
 import json
 import subprocess
 import tempfile
+import platform
 from pathlib import Path
 from datetime import datetime
 import cv2
@@ -140,16 +141,124 @@ def process_command(text):
     if "clear memory" in text_lower or "forget everything" in text_lower:
         return True, "CLEAR_MEMORY"
     
+    # Music/song detection - Enhanced with Malayalam and better detection
+    music_keywords_en = ["song", "music", "singing", "sing", "play", "what song", "what music", 
+                         "identify song", "name that song", "shazam", "recognize song", "find song",
+                         "search song", "what is this song", "which song", "song name"]
+    
+    # Malayalam keywords for music/song
+    music_keywords_ml = ["പാട്ട്", "ഗാനം", "സംഗീതം", "എന്ത് പാട്ട്", "പാട്ട് പേര്", "ഗാനം പേര്",
+                        "ഈ പാട്ട്", "ഏത് പാട്ട്", "പാട്ട് കണ്ടെത്തുക", "ഗാനം കണ്ടെത്തുക"]
+    
+    # Check both English and Malayalam
+    if any(keyword in text_lower for keyword in music_keywords_en) or \
+       any(keyword in text for keyword in music_keywords_ml):
+        return True, "MUSIC_DETECTION_REQUESTED"
+    
+    # Wake word detection - simplified to "talk to me"
+    if "talk to me" in text_lower:
+        return True, "WAKE_WORD_DETECTED"
+    
+    # Application launch commands
+    app_commands = {
+        "notepad": ["notepad", "open notepad", "launch notepad", "start notepad"],
+        "calculator": ["calculator", "calc", "open calculator", "launch calculator"],
+        "file explorer": ["file explorer", "explorer", "open file explorer", "open files"],
+        "browser": ["browser", "open browser", "chrome", "firefox", "open chrome"],
+        "terminal": ["terminal", "cmd", "command prompt", "open terminal"],
+    }
+    
+    for app, keywords in app_commands.items():
+        if any(keyword in text_lower for keyword in keywords):
+            return True, f"OPEN_{app.upper().replace(' ', '_')}"
+    
     return False, None
 
-def call_llm(prompt, tokens=100):
-    """Call LLM with optimized settings for speed"""
+def launch_application(app_name, user_text=""):
+    """Launch applications based on command"""
+    system = platform.system().lower()
+    
+    app_commands = {
+        "notepad": {
+            "windows": "notepad.exe",
+            "linux": "gedit",
+            "darwin": "open -a TextEdit"
+        },
+        "calculator": {
+            "windows": "calc.exe",
+            "linux": "gnome-calculator",
+            "darwin": "open -a Calculator"
+        },
+        "file explorer": {
+            "windows": "explorer.exe",
+            "linux": "nautilus",
+            "darwin": "open ."
+        },
+        "browser": {
+            "windows": "start chrome",
+            "linux": "xdg-open https://www.google.com",
+            "darwin": "open -a Safari"
+        },
+        "terminal": {
+            "windows": "cmd.exe",
+            "linux": "gnome-terminal",
+            "darwin": "open -a Terminal"
+        }
+    }
+    
+    if app_name not in app_commands:
+        return f"I don't know how to open {app_name}. Available apps: notepad, calculator, file explorer, browser, terminal."
+    
     try:
+        command = app_commands[app_name].get(system)
+        if not command:
+            # Fallback for unsupported OS
+            return f"Opening {app_name} is not supported on this operating system."
+        
+        if system == "windows":
+            subprocess.Popen(command, shell=True)
+        elif system == "linux":
+            # For Linux, try multiple methods
+            try:
+                # Try direct command first
+                subprocess.Popen(command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except:
+                # Fallback to xdg-open for some apps
+                if app_name == "browser":
+                    subprocess.Popen(["xdg-open", "https://www.google.com"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.Popen(command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # macOS
+            subprocess.Popen(command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        print(f"[INFO] Launched application: {app_name}")
+        return f"Opening {app_name} for you!"
+    except Exception as e:
+        print(f"[ERROR] Failed to launch {app_name}: {e}")
+        return f"I tried to open {app_name}, but encountered an error. Please try opening it manually."
+
+def call_llm(prompt, tokens=100, system_prompt=None):
+    """Call LLM with optimized settings for speed
+    Supports multilingual conversations including Malayalam
+    """
+    try:
+        # Enhanced system prompt for multilingual support
+        if system_prompt is None:
+            system_prompt = (
+                "You are JUNO, a helpful AI assistant. "
+                "You can understand and respond in English, Malayalam, and other languages. "
+                "Respond naturally in the same language the user uses. "
+                "Be helpful, friendly, and concise."
+            )
+        
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        
         response = requests.post(
             OLLAMA_URL,
             json={
                 "model": "llama3.1:8b",
-                "prompt": prompt,
+                "prompt": full_prompt,
                 "stream": False,
                 "options": {
                     "num_predict": tokens,
@@ -172,32 +281,47 @@ def call_llm(prompt, tokens=100):
     except Exception as e:
         return f"[WARNING]️ LLM Error: {str(e)}"
 
-def transcribe_audio(audio_path):
+def transcribe_audio(audio_path, language=None):
     """
     Convert audio file to text using faster_whisper with optimizations
+    Supports multiple languages including Malayalam
     """
     if not STT_AVAILABLE:
         return None, "STT not available. Install faster_whisper."
     
     try:
-        # Optimized transcription settings for better accuracy
-        segments, info = stt_model.transcribe(
-            audio_path,
-            beam_size=7,  # Higher beam search for better accuracy
-            vad_filter=True,  # Filter out non-speech
-            vad_parameters=dict(
+        # Language codes: None = auto-detect, "ml" = Malayalam, "en" = English
+        # Whisper supports: en, ml, hi, ta, te, kn, and many more
+        transcribe_params = {
+            "beam_size": 7,  # Higher beam search for better accuracy
+            "vad_filter": True,  # Filter out non-speech
+            "vad_parameters": dict(
                 min_silence_duration_ms=500,  # Faster VAD
                 threshold=0.5  # More sensitive voice detection
             ),
-            condition_on_previous_text=True,  # Use context for better accuracy
-            temperature=0.0  # Deterministic output (most accurate)
-        )
+            "condition_on_previous_text": True,  # Use context for better accuracy
+            "temperature": 0.0  # Deterministic output (most accurate)
+        }
+        
+        # Add language if specified, otherwise auto-detect
+        if language:
+            transcribe_params["language"] = language
+            print(f"[INFO] Transcribing with language: {language}")
+        else:
+            print("[INFO] Auto-detecting language (supports English, Malayalam, and more)")
+        
+        segments, info = stt_model.transcribe(audio_path, **transcribe_params)
+        
+        # Log detected language
+        detected_lang = info.language if hasattr(info, 'language') else 'unknown'
+        print(f"[INFO] Detected language: {detected_lang}")
+        
         text = ""
         for segment in segments:
             text += segment.text + " "
         
         result = text.strip()
-        print(f"[OK] Transcribed: '{result[:50]}...' (length: {len(result)})")
+        print(f"[OK] Transcribed: '{result[:50]}...' (length: {len(result)}, lang: {detected_lang})")
         return result, None
     except Exception as e:
         print(f"[ERROR] Transcription error: {str(e)}")
@@ -395,8 +519,8 @@ async def transcribe(file: UploadFile = File(...)):
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        # Transcribe
-        text, error = transcribe_audio(tmp_path)
+        # Transcribe with auto language detection
+        text, error = transcribe_audio(tmp_path, language=None)
         
         # Clean up
         os.unlink(tmp_path)
@@ -434,9 +558,14 @@ async def voice_chat(file: UploadFile = File(...)):
     global conversation_history
     
     if not STT_AVAILABLE:
-        return {"error": "STT not available", "transcript": None, "response": None, "audio_path": None}
+        print("[ERROR] STT not available")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "STT not available", "transcript": None, "response": None, "audio_path": None}
+        )
     
     try:
+        print("[INFO] Received audio file, starting transcription...")
         # Step 1: Transcribe audio (handle both WAV and WebM)
         file_ext = ".webm" if file.content_type == "audio/webm" else ".wav"
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
@@ -444,7 +573,9 @@ async def voice_chat(file: UploadFile = File(...)):
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        user_text, stt_error = transcribe_audio(tmp_path)
+        print(f"[INFO] Saved audio to {tmp_path}, transcribing...")
+        # Auto-detect language (supports English, Malayalam, and many others)
+        user_text, stt_error = transcribe_audio(tmp_path, language=None)
         
         # Clean up temp file
         try:
@@ -453,15 +584,49 @@ async def voice_chat(file: UploadFile = File(...)):
             pass
         
         if stt_error or not user_text:
-            return {"error": stt_error or "No speech detected", "transcript": None, "response": None, "audio_path": None}
+            print(f"[ERROR] Transcription failed: {stt_error or 'No speech detected'}")
+            return JSONResponse(
+                status_code=400,
+                content={"error": stt_error or "No speech detected", "transcript": None, "response": None, "audio_path": None}
+            )
+        
+        print(f"[INFO] Transcript: {user_text}")
         
         # Step 2: Check for commands (FAST pattern matching, no LLM)
         is_command, command_response = process_command(user_text)
         
         if is_command:
-            reply = command_response
+            print(f"[INFO] Command detected: {user_text}")
+            if command_response == "MUSIC_DETECTION_REQUESTED":
+                # Music detection - enhanced prompt for better understanding
+                reply = call_llm(
+                    f"user: {user_text}\n"
+                    f"The user is asking about music or a song. "
+                    f"They might be:\n"
+                    f"1. Asking to identify a song they're singing or playing\n"
+                    f"2. Asking about a specific song\n"
+                    f"3. Wanting to search for a song\n\n"
+                    f"Help them by:\n"
+                    f"- If they're singing/playing: Suggest using Shazam, Google Sound Search, or describe the song to search\n"
+                    f"- If asking about a song: Provide information or help search\n"
+                    f"- Provide a Google search link to find the song\n"
+                    f"- Be helpful and friendly\n"
+                    f"- Respond in the same language the user used (English or Malayalam)\n"
+                    f"assistant:",
+                    tokens=120
+                )
+            elif command_response == "WAKE_WORD_DETECTED":
+                # Wake word - simple acknowledgment
+                reply = "I'm listening! How can I help you?"
+            elif command_response.startswith("OPEN_"):
+                # Application launch command
+                app_name = command_response.replace("OPEN_", "").replace("_", " ").lower()
+                reply = launch_application(app_name, user_text)
+            else:
+                reply = command_response
         else:
             # Normal conversation with LLM
+            print("[INFO] Processing with LLM...")
             conversation_history.append({"role": "user", "content": user_text})
             
             if len(conversation_history) > MAX_HISTORY:
@@ -474,6 +639,7 @@ async def voice_chat(file: UploadFile = File(...)):
             full_prompt += "assistant:"
             
             reply = call_llm(full_prompt, tokens=80)  # Reduced for speed
+            print(f"[INFO] LLM response: {reply[:100]}...")
             conversation_history.append({"role": "assistant", "content": reply})
             save_conversation_memory()  # Save after each exchange
         
@@ -482,17 +648,31 @@ async def voice_chat(file: UploadFile = File(...)):
         tts_error = None
         
         if TTS_AVAILABLE:
+            print("[INFO] Generating speech...")
             audio_file, tts_error = synthesize_speech(reply)
+            if tts_error:
+                print(f"[WARNING] TTS error: {tts_error}")
+            else:
+                print(f"[INFO] Audio generated: {audio_file}")
         
-        return {
+        result = {
             "transcript": user_text,
             "response": reply,
             "audio_path": audio_file,
             "tts_error": tts_error
         }
+        print(f"[INFO] Returning response: transcript={bool(user_text)}, response={bool(reply)}, audio={bool(audio_file)}")
+        return result
+        
     except Exception as e:
-        print(f"Error in voice_chat: {e}")
-        return {"error": str(e), "transcript": None, "response": None, "audio_path": None}
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR] Exception in voice_chat: {e}")
+        print(f"[ERROR] Traceback: {error_trace}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "transcript": None, "response": None, "audio_path": None}
+        )
 
 @app.get("/")
 def root():
@@ -566,4 +746,4 @@ if __name__ == "__main__":
         print("   Register faces using: python recognition_advanced.py")
     print("\n" + "="*60 + "\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

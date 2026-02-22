@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JUNO - AI Voice Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Animated background particles */
+        .particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            z-index: 0;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            animation: float 15s infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0) translateX(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-100vh) translateX(100px);
+                opacity: 0;
+            }
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 800px;
+            width: 90%;
+            backdrop-filter: blur(10px);
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 4em;
+            margin-bottom: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+            font-weight: 300;
+        }
+
+        .status-bar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 30px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4ade80;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .voice-container {
+            text-align: center;
+            margin: 40px 0;
+        }
+
+        .voice-button {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 4em;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .voice-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+
+        .voice-button:active {
+            transform: scale(0.95);
+        }
+
+        .voice-button.recording {
+            animation: recordPulse 1.5s infinite;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        @keyframes recordPulse {
+            0%, 100% {
+                box-shadow: 0 10px 30px rgba(239, 68, 68, 0.4);
+            }
+            50% {
+                box-shadow: 0 10px 50px rgba(239, 68, 68, 0.8);
+            }
+        }
+
+        .voice-button.processing {
+            animation: rotate 2s linear infinite;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }
+
+        @keyframes rotate {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .voice-visualizer {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+            height: 60px;
+            align-items: center;
+            margin: 20px 0;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .voice-visualizer.active {
+            opacity: 1;
+        }
+
+        .bar {
+            width: 4px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+            animation: barAnimation 0.5s ease-in-out infinite alternate;
+        }
+
+        .bar:nth-child(1) { animation-delay: 0s; }
+        .bar:nth-child(2) { animation-delay: 0.1s; }
+        .bar:nth-child(3) { animation-delay: 0.2s; }
+        .bar:nth-child(4) { animation-delay: 0.3s; }
+        .bar:nth-child(5) { animation-delay: 0.4s; }
+        .bar:nth-child(6) { animation-delay: 0.3s; }
+        .bar:nth-child(7) { animation-delay: 0.2s; }
+        .bar:nth-child(8) { animation-delay: 0.1s; }
+
+        @keyframes barAnimation {
+            from {
+                height: 10px;
+            }
+            to {
+                height: 50px;
+            }
+        }
+
+        .instruction {
+            text-align: center;
+            color: #666;
+            font-size: 1.1em;
+            margin: 20px 0;
+            font-weight: 500;
+        }
+
+        .chat-container {
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            display: none;
+        }
+
+        .chat-container.active {
+            display: block;
+        }
+
+        .message {
+            margin: 15px 0;
+            padding: 15px 20px;
+            border-radius: 15px;
+            animation: messageSlide 0.3s ease-out;
+            max-width: 80%;
+        }
+
+        @keyframes messageSlide {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.assistant {
+            background: white;
+            color: #333;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-header {
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .message-content {
+            font-size: 1em;
+            line-height: 1.5;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        .spinner.active {
+            display: block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Transcript area */
+        .transcript-area {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+            min-height: 80px;
+            display: none;
+        }
+
+        .transcript-area.active {
+            display: block;
+        }
+
+        .transcript-label {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .transcript-text {
+            color: #333;
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .voice-button {
+                width: 150px;
+                height: 150px;
+                font-size: 3em;
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+
+        /* Audio player */
+        .audio-player {
+            display: none;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .audio-player.active {
+            display: block;
+        }
+
+        audio {
+            width: 100%;
+            max-width: 400px;
+            border-radius: 25px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated background particles -->
+    <div class="particles" id="particles"></div>
+
+    <div class="container">
+        <div class="header">
+            <div class="logo">🤖</div>
+            <h1>JUNO</h1>
+            <p class="subtitle">Your AI Voice Assistant</p>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-indicator"></div>
+            <span id="statusText">Ready to listen</span>
+        </div>
+
+        <div class="voice-container">
+            <button class="voice-button" id="voiceBtn">
+                <span id="btnIcon">🎤</span>
+            </button>
+
+            <div class="voice-visualizer" id="visualizer">
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+            </div>
+
+            <p class="instruction" id="instruction">Click the microphone to start talking</p>
+        </div>
+
+        <div class="transcript-area" id="transcriptArea">
+            <div class="transcript-label">You said:</div>
+            <div class="transcript-text" id="transcriptText"></div>
+        </div>
+
+        <div class="audio-player" id="audioPlayer">
+            <div class="transcript-label">JUNO's response:</div>
+            <audio controls id="audioElement"></audio>
+        </div>
+
+        <div class="spinner" id="spinner"></div>
+
+        <div class="chat-container" id="chatContainer"></div>
+
+        <div class="controls">
+            <button class="btn btn-secondary" id="clearBtn">
+                🗑️ Clear History
+            </button>
+            <button class="btn btn-secondary" id="viewHistoryBtn">
+                📜 View History
+            </button>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            let mediaRecorder;
+            let audioChunks = [];
+            let isRecording = false;
+            let conversationHistory = [];
+
+            // Create floating particles
+            function createParticles() {
+                const particlesContainer = document.getElementById('particles');
+                for (let i = 0; i < 50; i++) {
+                    const particle = document.createElement('div');
+                    particle.className = 'particle';
+                    particle.style.left = Math.random() * 100 + '%';
+                    particle.style.animationDelay = Math.random() * 15 + 's';
+                    particle.style.animationDuration = (Math.random() * 10 + 10) + 's';
+                    particlesContainer.appendChild(particle);
+                }
+            }
+
+            createParticles();
+
+            // Update status
+            function updateStatus(text, isRecording = false, isProcessing = false) {
+                const statusText = document.getElementById('statusText');
+                const indicator = document.querySelector('.status-indicator');
+                statusText.textContent = text;
+        
+                if (isRecording) {
+                    indicator.style.background = '#ef4444';
+                } else if (isProcessing) {
+                    indicator.style.background = '#f59e0b';
+                } else {
+                    indicator.style.background = '#4ade80';
+                }
+            }
+
+            // Voice button handler
+            const voiceBtn = document.getElementById('voiceBtn');
+            if (voiceBtn) {
+                voiceBtn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('%c🎤 Voice button clicked!', 'color: #9333ea; font-weight: bold;');
+                    console.log('Current recording state:', isRecording);
+                    
+                    if (isRecording) {
+                        console.log('Stopping recording...');
+                        stopRecording();
+                    } else {
+                        console.log('Starting recording...');
+                        await startRecording();
+                    }
+                });
+                
+                // Also handle touch events for mobile
+                voiceBtn.addEventListener('touchend', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!isRecording) {
+                        await startRecording();
+                    } else {
+                        stopRecording();
+                    }
+                });
+                
+                console.log('✓ Voice button event listeners attached');
+            } else {
+                console.error('❌ Voice button not found! Check HTML structure.');
+            }
+
+            // Clear history button handler
+            const clearBtn = document.getElementById('clearBtn');
+            if (clearBtn) {
+                clearBtn.addEventListener('click', clearHistory);
+            }
+
+            // Toggle history button handler
+            const viewHistoryBtn = document.getElementById('viewHistoryBtn');
+            if (viewHistoryBtn) {
+                viewHistoryBtn.addEventListener('click', toggleHistory);
+            }
+
+            // Start recording
+            async function startRecording() {
+                try {
+                    console.log('%c🎤 Requesting microphone access...', 'color: #f59e0b; font-weight: bold;');
+                    updateStatus('🎤 Requesting microphone...', false, true);
+                    
+                    // Check if getUserMedia is available
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        throw new Error('getUserMedia is not supported in this browser. Please use Chrome, Firefox, or Edge.');
+                    }
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
+                    });
+                    console.log('%c✓ Microphone access granted!', 'color: #10b981; font-weight: bold;');
+                    console.log('Audio tracks:', stream.getAudioTracks().length);
+                    
+                    // Get supported MIME types
+                    const options = { mimeType: 'audio/webm' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        options.mimeType = 'audio/webm;codecs=opus';
+                        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                            options.mimeType = ''; // Use default
+                        }
+                    }
+                    console.log('Using MIME type:', options.mimeType || 'default');
+                    
+                    mediaRecorder = new MediaRecorder(stream, options);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        console.log('Audio data available, size:', event.data.size);
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        console.log('Recording stopped, chunks:', audioChunks.length);
+                        if (audioChunks.length === 0) {
+                            console.error('No audio chunks recorded!');
+                            alert('No audio was recorded. Please try again.');
+                            updateStatus('❌ Recording failed');
+                            return;
+                        }
+                        
+                        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+                        const audioBlob = new Blob(audioChunks, { type: mimeType });
+                        console.log('Audio blob created, size:', audioBlob.size, 'bytes, type:', mimeType);
+                        
+                        if (audioBlob.size === 0) {
+                            console.error('Audio blob is empty!');
+                            alert('Recorded audio is empty. Please check your microphone.');
+                            updateStatus('❌ Recording failed');
+                            return;
+                        }
+                        
+                        await sendAudioToServer(audioBlob);
+                    };
+
+                    mediaRecorder.onerror = (event) => {
+                        console.error('MediaRecorder error:', event.error);
+                        alert('Recording error: ' + event.error.message);
+                    };
+
+                    // Start recording with timeslice to ensure data is available
+                    mediaRecorder.start(100); // Collect data every 100ms
+                    isRecording = true;
+                    console.log('Recording started');
+
+                    // Update UI
+                    const voiceBtn = document.getElementById('voiceBtn');
+                    const btnIcon = document.getElementById('btnIcon');
+                    const instruction = document.getElementById('instruction');
+                    const visualizer = document.getElementById('visualizer');
+
+                    voiceBtn.classList.add('recording');
+                    btnIcon.textContent = '⏹️';
+                    instruction.textContent = 'Recording... Click again to stop';
+                    visualizer.classList.add('active');
+
+                    updateStatus('🔴 Recording...', true);
+
+                } catch (error) {
+                    console.error('%c❌ Error accessing microphone:', 'color: #ef4444; font-weight: bold;', error);
+                    console.error('Error name:', error.name);
+                    console.error('Error message:', error.message);
+                    
+                    let errorMsg = 'Could not access microphone.\n\n';
+                    
+                    if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                        errorMsg += 'Microphone permission was denied.\n\n';
+                        errorMsg += 'Please:\n';
+                        errorMsg += '1. Click the lock icon in the address bar\n';
+                        errorMsg += '2. Allow microphone access\n';
+                        errorMsg += '3. Refresh the page and try again';
+                    } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                        errorMsg += 'No microphone found.\n\n';
+                        errorMsg += 'Please connect a microphone and try again.';
+                    } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                        errorMsg += 'Microphone is being used by another application.\n\n';
+                        errorMsg += 'Please close other apps using the microphone and try again.';
+                    } else {
+                        errorMsg += 'Error: ' + error.message;
+                    }
+                    
+                    alert(errorMsg);
+                    updateStatus('❌ Microphone error: ' + error.name);
+                    
+                    // Reset UI
+                    const voiceBtn = document.getElementById('voiceBtn');
+                    const btnIcon = document.getElementById('btnIcon');
+                    if (voiceBtn && btnIcon) {
+                        voiceBtn.classList.remove('recording', 'processing');
+                        btnIcon.textContent = '🎤';
+                    }
+                }
+            }
+
+            // Stop recording
+            function stopRecording() {
+                if (mediaRecorder && isRecording) {
+                    console.log('Stopping recording...');
+                    console.log('Current state:', mediaRecorder.state);
+                    console.log('Audio chunks so far:', audioChunks.length);
+                    
+                    mediaRecorder.stop();
+                    mediaRecorder.stream.getTracks().forEach(track => {
+                        track.stop();
+                        console.log('Stopped track:', track.kind);
+                    });
+                    isRecording = false;
+
+                    // Update UI
+                    const voiceBtn = document.getElementById('voiceBtn');
+                    const btnIcon = document.getElementById('btnIcon');
+                    const instruction = document.getElementById('instruction');
+                    const visualizer = document.getElementById('visualizer');
+                    const spinner = document.getElementById('spinner');
+
+                    voiceBtn.classList.remove('recording');
+                    voiceBtn.classList.add('processing');
+                    btnIcon.textContent = '⏳';
+                    instruction.textContent = 'Processing your request...';
+                    visualizer.classList.remove('active');
+                    spinner.classList.add('active');
+
+                    updateStatus('⏳ Processing...', false, true);
+                } else {
+                    console.warn('Cannot stop recording: mediaRecorder=', mediaRecorder, 'isRecording=', isRecording);
+                }
+            }
+
+            // Send audio to server
+            async function sendAudioToServer(audioBlob) {
+                try {
+                    console.log('Sending audio to server, size:', audioBlob.size, 'bytes');
+                    updateStatus('📤 Sending audio...');
+                    
+                    const formData = new FormData();
+                    // Use webm format (MediaRecorder default) or wav
+                    const mimeType = audioBlob.type || 'audio/webm';
+                    const extension = mimeType.includes('webm') ? 'webm' : 'wav';
+                    formData.append('file', audioBlob, `recording.${extension}`);
+
+                    console.log('Fetching /voice_chat...');
+                    const response = await fetch('/voice_chat', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    console.log('Response status:', response.status, response.statusText);
+
+                    // Check if response is OK
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('Server error:', response.status, errorText);
+                        throw new Error(`Server error: ${response.status} - ${errorText}`);
+                    }
+
+                    const result = await response.json();
+                    console.log('Server response:', result);
+
+                    // Hide spinner
+                    document.getElementById('spinner').classList.remove('active');
+
+                    // Reset button
+                    const voiceBtn = document.getElementById('voiceBtn');
+                    const btnIcon = document.getElementById('btnIcon');
+                    const instruction = document.getElementById('instruction');
+
+                    voiceBtn.classList.remove('processing');
+                    btnIcon.textContent = '🎤';
+                    instruction.textContent = 'Click the microphone to start talking';
+
+                    if (result.error) {
+                        console.error('Error in response:', result.error);
+                        alert('Error: ' + result.error);
+                        updateStatus('❌ Error occurred');
+                        return;
+                    }
+
+                    // Display transcript
+                    if (result.transcript) {
+                        console.log('Transcript received:', result.transcript);
+                        const transcriptArea = document.getElementById('transcriptArea');
+                        const transcriptText = document.getElementById('transcriptText');
+                        transcriptText.textContent = result.transcript;
+                        transcriptArea.classList.add('active');
+
+                        // Add to conversation history
+                        addMessage('user', result.transcript);
+                    } else {
+                        console.warn('No transcript in response');
+                    }
+
+                    // Display response
+                    if (result.response) {
+                        console.log('Response received:', result.response);
+                        addMessage('assistant', result.response);
+                    } else {
+                        console.warn('No response in result:', result);
+                        updateStatus('⚠️ No response received');
+                        alert('No response received from server. Check server logs.');
+                        return;
+                    }
+
+                    // Play audio response
+                    if (result.audio_path) {
+                        console.log('Playing audio:', result.audio_path);
+                        playAudio(result.audio_path);
+                    } else if (result.tts_error) {
+                        console.warn('TTS error:', result.tts_error);
+                        updateStatus('✅ Response received (no audio)');
+                    }
+
+                    updateStatus('✅ Ready to listen');
+
+                } catch (error) {
+                    console.error('Error sending audio:', error);
+                    console.error('Error stack:', error.stack);
+                    alert('Error communicating with server: ' + error.message);
+            
+                    // Reset UI
+                    document.getElementById('spinner').classList.remove('active');
+                    const voiceBtn = document.getElementById('voiceBtn');
+                    const btnIcon = document.getElementById('btnIcon');
+                    const instruction = document.getElementById('instruction');
+                    voiceBtn.classList.remove('processing');
+                    btnIcon.textContent = '🎤';
+                    instruction.textContent = 'Click the microphone to start talking';
+                    updateStatus('❌ Error occurred');
+                }
+            }
+
+            // Play audio response
+            function playAudio(audioPath) {
+                const audioPlayer = document.getElementById('audioPlayer');
+                const audioElement = document.getElementById('audioElement');
+        
+                audioElement.src = '/audio/' + audioPath;
+                audioPlayer.classList.add('active');
+        
+                audioElement.play().catch(error => {
+                    console.error('Error playing audio:', error);
+                });
+
+                updateStatus('🔊 Playing response...');
+
+                audioElement.onended = () => {
+                    updateStatus('✅ Ready to listen');
+                };
+            }
+
+            // Add message to chat
+            function addMessage(role, content) {
+                conversationHistory.push({ role, content });
+
+                const chatContainer = document.getElementById('chatContainer');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role}`;
+        
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'message-header';
+                headerDiv.textContent = role === 'user' ? 'You' : 'JUNO';
+        
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.textContent = content;
+        
+                messageDiv.appendChild(headerDiv);
+                messageDiv.appendChild(contentDiv);
+                chatContainer.appendChild(messageDiv);
+        
+                // Scroll to bottom
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            // Clear conversation history
+            async function clearHistory() {
+                if (confirm('Clear all conversation history?')) {
+                    try {
+                        await fetch('/memory/clear', { method: 'POST' });
+                        conversationHistory = [];
+                        document.getElementById('chatContainer').innerHTML = '';
+                        document.getElementById('chatContainer').classList.remove('active');
+                        document.getElementById('transcriptArea').classList.remove('active');
+                        document.getElementById('audioPlayer').classList.remove('active');
+                        alert('History cleared!');
+                        updateStatus('✅ Ready to listen');
+                    } catch (error) {
+                        console.error('Error clearing history:', error);
+                        alert('Error clearing history');
+                    }
+                }
+            }
+
+            // Toggle history view
+            function toggleHistory() {
+                const chatContainer = document.getElementById('chatContainer');
+                if (chatContainer.classList.contains('active')) {
+                    chatContainer.classList.remove('active');
+                    document.getElementById('viewHistoryBtn').textContent = '📜 View History';
+                } else {
+                    chatContainer.classList.add('active');
+                    document.getElementById('viewHistoryBtn').textContent = '📜 Hide History';
+                }
+            }
+
+            // Check server status on load
+            async function checkStatus() {
+                try {
+                    console.log('Checking server status...');
+                    const response = await fetch('/status');
+                    
+                    if (!response.ok) {
+                        throw new Error(`Server returned ${response.status}`);
+                    }
+                    
+                    const status = await response.json();
+                    console.log('Server status:', status);
+            
+                    if (status.status === 'running') {
+                        console.log('✓ Server is running');
+                        console.log('STT available:', status.stt_available);
+                        console.log('TTS available:', status.tts_available);
+                        console.log('Face auth:', status.face_auth_available);
+                        
+                        if (!status.stt_available) {
+                            alert('Warning: Speech-to-Text is not available. Voice features will not work.');
+                            updateStatus('⚠️ STT not available');
+                        } else {
+                            updateStatus('✅ Ready to listen');
+                        }
+                    } else {
+                        updateStatus('⚠️ Server not ready');
+                    }
+                } catch (error) {
+                    console.error('Error checking status:', error);
+                    console.error('Make sure the server is running: python server.py');
+                    alert('Cannot connect to server!\n\nPlease make sure:\n1. Server is running (python server.py)\n2. You are using http://localhost:8000/ui/index.html\n\nError: ' + error.message);
+                    updateStatus('❌ Cannot connect to server');
+                }
+            }
+
+            // Check if using 0.0.0.0 (will block microphone)
+            if (window.location.hostname === '0.0.0.0') {
+                const errorMsg = '⚠️ CRITICAL: You are using 0.0.0.0 which blocks microphone access!\n\n' +
+                               'Please use: http://localhost:8000/ui/index.html\n\n' +
+                               'Chrome blocks microphone permissions for 0.0.0.0 addresses.';
+                alert(errorMsg);
+                console.error('❌ Using 0.0.0.0 - microphone will be blocked!');
+                console.error('Please change URL to: http://localhost:8000/ui/index.html');
+                updateStatus('❌ Wrong URL - use localhost');
+                
+                // Show warning in UI
+                const warningDiv = document.createElement('div');
+                warningDiv.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #ef4444; color: white; padding: 15px 20px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.3); max-width: 500px; text-align: center;';
+                warningDiv.innerHTML = '<strong>⚠️ Wrong URL!</strong><br>Use <code style="background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 3px;">http://localhost:8000/ui/index.html</code><br>Microphone is blocked on 0.0.0.0';
+                document.body.appendChild(warningDiv);
+                
+                // Don't initialize further
+                return;
+            }
+
+            // Filter out extension errors in console
+            const originalError = console.error;
+            const originalWarn = console.warn;
+            console.error = function(...args) {
+                const message = args.join(' ');
+                // Only show errors that are NOT from extensions
+                if (!message.includes('chrome-extension://') && 
+                    !message.includes('extension://') &&
+                    !message.includes('zybTrackerStatisticsAction') &&
+                    !message.includes('copilot') &&
+                    !message.includes('contentScript')) {
+                    originalError.apply(console, args);
+                }
+            };
+            console.warn = function(...args) {
+                const message = args.join(' ');
+                // Only show warnings that are NOT from extensions
+                if (!message.includes('chrome-extension://') && 
+                    !message.includes('extension://') &&
+                    !message.includes('zybTrackerStatisticsAction') &&
+                    !message.includes('copilot')) {
+                    originalWarn.apply(console, args);
+                }
+            };
+
+            // Initialize
+            console.log('%c🎤 JUNO AI Voice Assistant', 'color: #9333ea; font-size: 16px; font-weight: bold;');
+            console.log('Initializing JUNO UI...');
+            console.log('Current URL:', window.location.href);
+            console.log('Hostname:', window.location.hostname);
+            
+            const voiceBtn = document.getElementById('voiceBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const viewHistoryBtn = document.getElementById('viewHistoryBtn');
+            
+            console.log('Voice button found:', !!voiceBtn);
+            console.log('Clear button found:', !!clearBtn);
+            console.log('View history button found:', !!viewHistoryBtn);
+            
+            // Verify button is clickable
+            if (voiceBtn) {
+                voiceBtn.style.cursor = 'pointer';
+                voiceBtn.addEventListener('mouseenter', () => {
+                    console.log('Microphone button hovered');
+                });
+            }
+            
+            checkStatus();
+            
+            console.log('%c✓ JUNO UI initialized successfully', 'color: #10b981; font-weight: bold;');
+            console.log('Click the microphone button to start recording!');
+        });
