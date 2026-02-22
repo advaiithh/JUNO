@@ -262,10 +262,10 @@ def call_llm(prompt, tokens=100, system_prompt=None):
                 "stream": False,
                 "options": {
                     "num_predict": tokens,
-                    "temperature": 0.7,
-                    "top_k": 40,
-                    "top_p": 0.9,
-                    "num_ctx": 2048  # Reduced context window for speed
+                    "temperature": 0.5,
+                    "top_k": 20,
+                    "top_p": 0.85,
+                    "num_ctx": 1024  # Reduced context window for speed
                 }
             },
             timeout=60  # Increased timeout for initial model load (model takes ~10s to load)
@@ -293,10 +293,10 @@ def transcribe_audio(audio_path, language=None):
         # Language codes: None = auto-detect, "ml" = Malayalam, "en" = English
         # Whisper supports: en, ml, hi, ta, te, kn, and many more
         transcribe_params = {
-            "beam_size": 7,  # Higher beam search for better accuracy
+            "beam_size": 1,  # Greedy - fastest transcription
             "vad_filter": True,  # Filter out non-speech
             "vad_parameters": dict(
-                min_silence_duration_ms=500,  # Faster VAD
+                min_silence_duration_ms=300,  # Faster VAD
                 threshold=0.5  # More sensitive voice detection
             ),
             "condition_on_previous_text": True,  # Use context for better accuracy
@@ -502,7 +502,7 @@ async def chat(request: dict):
             full_prompt += f"{msg['role']}: {msg['content']}\n"
         full_prompt += "assistant:"
 
-        reply = call_llm(full_prompt, tokens=80)  # Reduced tokens for faster response
+        reply = call_llm(full_prompt, tokens=50)  # Reduced tokens for faster response
 
         conversation_history.append({"role": "assistant", "content": reply})
         save_conversation_memory()  # Save after each exchange
@@ -649,7 +649,7 @@ async def voice_chat(file: UploadFile = File(...)):
                 full_prompt += f"{msg['role']}: {msg['content']}\n"
             full_prompt += "assistant:"
             
-            reply = call_llm(full_prompt, tokens=80)  # Reduced for speed
+            reply = call_llm(full_prompt, tokens=50)  # Reduced for speed
             print(f"[INFO] LLM response: {reply[:100]}...")
             conversation_history.append({"role": "assistant", "content": reply})
             save_conversation_memory()  # Save after each exchange

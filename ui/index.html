@@ -1,241 +1,419 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JUNO - AI Voice Assistant</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            padding: 40px;
-            max-width: 500px;
-            width: 100%;
-            text-align: center;
-        }
-        .logo { font-size: 48px; margin-bottom: 10px; }
-        h1 { color: #333; margin-bottom: 10px; font-size: 32px; }
-        .subtitle { color: #666; margin-bottom: 30px; font-size: 16px; }
-        .status {
-            background: #f3f4f6;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 30px;
-            font-size: 14px;
-            color: #666;
-        }
-        .status.active    { background: #d1fae5; color: #065f46; }
-        .status.recording { background: #fee2e2; color: #991b1b; }
-        .status.processing{ background: #fef3c7; color: #92400e; }
-        .status.error     { background: #fee2e2; color: #991b1b; }
-        .mic-button {
-            width: 120px; height: 120px;
-            border-radius: 50%; border: none;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; font-size: 48px; cursor: pointer;
-            transition: all 0.3s; margin: 20px auto;
-            display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 10px 30px rgba(102,126,234,0.4);
-        }
-        .mic-button:hover  { transform: scale(1.05); }
-        .mic-button:active { transform: scale(0.95); }
-        .mic-button.recording  { background: #ef4444; animation: pulse 1.5s infinite; }
-        .mic-button.processing { background: #f59e0b; }
-        @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
-        .box {
-            border-radius: 10px; padding: 15px;
-            margin: 15px 0; text-align: left; display: none;
-        }
-        .box.active { display: block; }
-        .box-label { font-size: 12px; color: #666; margin-bottom: 5px; }
-        .transcript-box { background: #f9fafb; }
-        .response-box   { background: #eff6ff; }
-        .response-box .box-label { color: #1e40af; font-weight: 600; }
-        .response-box .box-text  { color: #1e3a8a; font-size: 14px; line-height: 1.6; }
-        .error-box { background: #fee2e2; color: #991b1b; font-size: 14px; }
-        .instructions { color: #666; font-size: 14px; margin-top: 10px; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JUNO - AI Voice Assistant</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+
+body{
+  font-family:'Segoe UI',system-ui,sans-serif;
+  background:#0a0a14;
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  padding:20px;
+  overflow-x:hidden;
+}
+
+/* animated gradient background */
+body::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%,rgba(102,126,234,0.18) 0%,transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 100%,rgba(118,75,162,0.18) 0%,transparent 60%);
+  pointer-events:none;
+}
+
+/* glass card */
+.card{
+  position:relative;
+  background:rgba(255,255,255,0.04);
+  backdrop-filter:blur(24px);
+  -webkit-backdrop-filter:blur(24px);
+  border:1px solid rgba(255,255,255,0.1);
+  border-radius:28px;
+  padding:44px 40px 36px;
+  width:100%;
+  max-width:480px;
+  text-align:center;
+  box-shadow:0 30px 80px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+/* logo ring */
+.logo-wrap{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:72px;height:72px;
+  margin-bottom:14px;
+}
+.logo-wrap::before{
+  content:'';
+  position:absolute;inset:0;
+  border-radius:50%;
+  background:linear-gradient(135deg,#667eea,#764ba2);
+  opacity:0.25;
+  animation:ringPulse 3s ease-in-out infinite;
+}
+@keyframes ringPulse{0%,100%{transform:scale(1);opacity:.25}50%{transform:scale(1.15);opacity:.12}}
+.logo{font-size:38px;position:relative;z-index:1}
+
+h1{
+  font-size:34px;font-weight:700;letter-spacing:-1px;
+  background:linear-gradient(135deg,#a78bfa,#818cf8,#c084fc);
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  margin-bottom:4px;
+}
+.subtitle{font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:28px;letter-spacing:.5px}
+
+/* status pill */
+.status{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:9px 20px;border-radius:50px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.1);
+  font-size:13px;color:rgba(255,255,255,0.5);
+  margin-bottom:32px;transition:all .3s;
+}
+.dot{width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;transition:background .3s}
+.status.recording .dot{background:#ef4444;animation:blink .7s infinite}
+.status.recording{color:#fca5a5;border-color:rgba(239,68,68,.3)}
+.status.processing .dot{background:#f59e0b;animation:blink .5s infinite}
+.status.processing{color:#fcd34d;border-color:rgba(245,158,11,.3)}
+.status.error .dot{background:#ef4444}
+.status.error{color:#fca5a5;border-color:rgba(239,68,68,.3)}
+.status.active .dot{background:#4ade80}
+.status.active{color:#86efac;border-color:rgba(74,222,128,.3)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* mic button */
+.mic-wrap{position:relative;display:inline-block;margin:4px auto 20px}
+.mic-ring{
+  position:absolute;inset:-12px;border-radius:50%;
+  border:2px solid rgba(102,126,234,.3);
+  opacity:0;transition:opacity .3s;
+}
+.mic-wrap:hover .mic-ring{opacity:1}
+.mic-btn{
+  width:130px;height:130px;border-radius:50%;border:none;
+  background:linear-gradient(145deg,#667eea,#764ba2);
+  font-size:52px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 0 0 rgba(102,126,234,.4),0 15px 40px rgba(102,126,234,.35);
+  transition:transform .2s,box-shadow .3s;
+  outline:none;position:relative;
+}
+.mic-btn:hover{transform:scale(1.06);box-shadow:0 0 0 0 rgba(102,126,234,.4),0 20px 50px rgba(102,126,234,.5)}
+.mic-btn:active{transform:scale(.94)}
+.mic-btn.recording{
+  background:linear-gradient(145deg,#ef4444,#dc2626);
+  animation:micPulse 1.2s ease-in-out infinite;
+  box-shadow:0 0 0 8px rgba(239,68,68,.15),0 15px 40px rgba(239,68,68,.4);
+}
+.mic-btn.processing{
+  background:linear-gradient(145deg,#f59e0b,#d97706);
+  box-shadow:0 0 0 0 rgba(245,158,11,.4),0 15px 40px rgba(245,158,11,.3);
+}
+@keyframes micPulse{
+  0%,100%{box-shadow:0 0 0 8px rgba(239,68,68,.15),0 15px 40px rgba(239,68,68,.4)}
+  50%{box-shadow:0 0 0 20px rgba(239,68,68,.05),0 15px 40px rgba(239,68,68,.5)}
+}
+
+/* wave bars (animation while recording) */
+.wave-bars{
+  display:flex;align-items:center;justify-content:center;gap:4px;
+  height:28px;margin-bottom:8px;opacity:0;transition:opacity .3s;
+}
+.wave-bars.active{opacity:1}
+.wave-bars span{
+  width:4px;border-radius:4px;
+  background:linear-gradient(to top,#667eea,#c084fc);
+  animation:wave 1s ease-in-out infinite;
+}
+.wave-bars span:nth-child(1){animation-delay:.0s;height:10px}
+.wave-bars span:nth-child(2){animation-delay:.1s;height:22px}
+.wave-bars span:nth-child(3){animation-delay:.2s;height:16px}
+.wave-bars span:nth-child(4){animation-delay:.3s;height:26px}
+.wave-bars span:nth-child(5){animation-delay:.4s;height:12px}
+.wave-bars span:nth-child(6){animation-delay:.3s;height:20px}
+.wave-bars span:nth-child(7){animation-delay:.2s;height:14px}
+@keyframes wave{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.8)}}
+
+.instructions{font-size:13px;color:rgba(255,255,255,.35);margin-bottom:24px;letter-spacing:.3px}
+
+/* chat bubbles */
+.msg{
+  margin:10px 0;padding:12px 16px;border-radius:16px;font-size:14px;line-height:1.55;
+  text-align:left;animation:fadeIn .3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{
+  background:rgba(102,126,234,.15);border:1px solid rgba(102,126,234,.2);
+  color:rgba(255,255,255,.85);border-bottom-right-radius:4px;
+}
+.msg.user::before{
+  content:'You  ';font-size:11px;font-weight:600;
+  color:#818cf8;display:block;margin-bottom:4px;letter-spacing:.5px;
+}
+.msg.juno{
+  background:rgba(192,132,252,.1);border:1px solid rgba(192,132,252,.2);
+  color:rgba(255,255,255,.85);border-bottom-left-radius:4px;
+}
+.msg.juno::before{
+  content:'JUNO  ';font-size:11px;font-weight:600;
+  color:#c084fc;display:block;margin-bottom:4px;letter-spacing:.5px;
+}
+
+/* chat container */
+#chatBox{max-height:230px;overflow-y:auto;margin-bottom:12px;padding-right:4px}
+#chatBox::-webkit-scrollbar{width:4px}
+#chatBox::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px}
+
+/* error box */
+.error-msg{
+  background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);
+  color:#fca5a5;border-radius:12px;padding:11px 14px;font-size:13px;
+  margin:10px 0;text-align:left;display:none;animation:fadeIn .3s ease;
+}
+.error-msg.show{display:block}
+
+/* audio player */
+#audioPlayer{
+  display:none;margin:12px 0;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:10px 14px;
+}
+#audioPlayer.show{display:block}
+#audioPlayer audio{width:100%;border-radius:8px}
+#audioPlayer p{font-size:11px;color:rgba(255,255,255,.35);margin-bottom:6px;letter-spacing:.4px}
+
+/* clear btn */
+.clear-btn{
+  background:transparent;border:1px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.35);padding:7px 18px;border-radius:20px;
+  cursor:pointer;font-size:12px;letter-spacing:.3px;transition:all .2s;margin-top:6px;
+}
+.clear-btn:hover{border-color:rgba(255,255,255,.25);color:rgba(255,255,255,.6)}
+
+/* responsive */
+@media(max-width:520px){.card{padding:32px 22px 28px}}
+</style>
 </head>
 <body>
-<div class="container">
-    <div class="logo">🤖</div>
-    <h1>JUNO</h1>
-    <div class="subtitle">AI Voice Assistant</div>
+<div class="card">
+  <div class="logo-wrap"><div class="logo">🤖</div></div>
+  <h1>JUNO</h1>
+  <p class="subtitle">AI VOICE ASSISTANT</p>
 
-    <div class="status" id="status">Checking server...</div>
+  <div class="status" id="status">
+    <div class="dot"></div>
+    <span id="statusText">Connecting...</span>
+  </div>
 
-    <button class="mic-button" id="micButton">🎤</button>
-    <div class="instructions" id="instructions">Click the microphone to start</div>
+  <div class="wave-bars" id="waveBars">
+    <span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span>
+  </div>
 
-    <div class="box transcript-box" id="transcriptBox">
-        <div class="box-label">You said:</div>
-        <div class="box-text" id="transcriptText"></div>
-    </div>
+  <div class="mic-wrap">
+    <div class="mic-ring"></div>
+    <button class="mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
+  </div>
 
-    <div class="box response-box" id="responseBox">
-        <div class="box-label">JUNO:</div>
-        <div class="box-text" id="responseText"></div>
-    </div>
+  <p class="instructions" id="instructions">Click the microphone to start</p>
 
-    <div class="box error-box" id="errorBox"></div>
+  <div id="chatBox"></div>
+
+  <div class="error-msg" id="errorBox"></div>
+
+  <div id="audioPlayer">
+    <p>🔊 JUNO is speaking</p>
+    <audio id="audioEl" controls></audio>
+  </div>
+
+  <button class="clear-btn" id="clearBtn" onclick="clearChat()" style="display:none">
+    🗑️ Clear
+  </button>
 </div>
 
+<!-- hidden audio for auto-play -->
+<audio id="autoAudio" style="display:none"></audio>
+
 <script>
-// ── Face Auth Guard ──────────────────────────────────────
-(async function enforceAuth() {
-    try {
-        const s = await (await fetch('/status')).json();
-        if (!s.face_auth_available) return;
-        const p = new URLSearchParams(window.location.search);
-        if (p.get('authenticated') === 'true') return;
-        const token = sessionStorage.getItem('juno_session');
-        if (!token) { window.location.replace('auth.html'); return; }
-        const r = await (await fetch('/auth/check_session?token=' + token)).json();
-        if (!r.valid) { sessionStorage.removeItem('juno_session'); window.location.replace('auth.html'); }
-    } catch(e) { console.warn('Auth check skipped:', e.message); }
+// ── Auth Guard ──────────────────────────────────────────
+(async function(){
+  try{
+    const s=await(await fetch('/status')).json();
+    if(!s.face_auth_available)return;
+    const p=new URLSearchParams(window.location.search);
+    if(p.get('authenticated')==='true')return;
+    const tok=sessionStorage.getItem('juno_session');
+    if(!tok){window.location.replace('auth.html');return;}
+    const r=await(await fetch('/auth/check_session?token='+tok)).json();
+    if(!r.valid){sessionStorage.removeItem('juno_session');window.location.replace('auth.html');}
+  }catch(e){console.warn('Auth skipped:',e.message);}
 })();
 
-// ── State ────────────────────────────────────────────────
-let mediaRecorder=null, audioChunks=[], isRecording=false, audioStream=null;
+// ── State ───────────────────────────────────────────────
+let rec=null,chunks=[],recording=false,stream=null,busy=false;
 
-const micButton       = document.getElementById('micButton');
-const statusDiv       = document.getElementById('status');
-const instructionsDiv = document.getElementById('instructions');
-const transcriptBox   = document.getElementById('transcriptBox');
-const transcriptText  = document.getElementById('transcriptText');
-const responseBox     = document.getElementById('responseBox');
-const responseText    = document.getElementById('responseText');
-const errorBox        = document.getElementById('errorBox');
-
-function updateStatus(msg, cls) {
-    statusDiv.textContent = msg;
-    statusDiv.className   = 'status ' + (cls||'');
+// ── UI helpers ──────────────────────────────────────────
+function setStatus(txt,cls){
+  document.getElementById('statusText').textContent=txt;
+  document.getElementById('status').className='status '+(cls||'');
 }
-function showError(msg) { errorBox.textContent=msg; errorBox.classList.add('active'); }
-function hideError()    { errorBox.classList.remove('active'); }
+function showErr(msg){
+  const b=document.getElementById('errorBox');
+  b.textContent=msg;b.classList.add('show');
+}
+function hideErr(){document.getElementById('errorBox').classList.remove('show')}
+function setBtn(ico,cls){
+  const b=document.getElementById('micBtn');
+  b.textContent=ico;b.className='mic-btn '+(cls||'');
+}
+function addMsg(role,text){
+  const box=document.getElementById('chatBox');
+  const d=document.createElement('div');
+  d.className='msg '+role;
+  d.textContent=text;
+  box.appendChild(d);
+  box.scrollTop=box.scrollHeight;
+  document.getElementById('clearBtn').style.display='inline-block';
+}
+function clearChat(){
+  document.getElementById('chatBox').innerHTML='';
+  document.getElementById('clearBtn').style.display='none';
+  document.getElementById('audioPlayer').classList.remove('show');
+  hideErr();
+}
 
-// ── Check Server ─────────────────────────────────────────
-async function checkServer() {
-    try {
-        const data = await (await fetch('/status')).json();
-        if (data.status === 'running') {
-            updateStatus('✅ Ready to listen', 'active');
-            if (!data.stt_available) showError('STT not available - voice disabled.');
-        } else { updateStatus('⚠️ Server not ready','error'); }
-    } catch(e) {
-        updateStatus('❌ Cannot connect to server','error');
-        showError('Cannot connect to server. Make sure python server.py is running.');
+// ── Init ────────────────────────────────────────────────
+(async function checkServer(){
+  try{
+    const d=await(await fetch('/status')).json();
+    if(d.status==='running'){
+      setStatus('Ready to listen','active');
+      if(!d.stt_available)showErr('Speech-to-text not available.');
+    }else{setStatus('Server not ready','error');}
+  }catch(e){
+    setStatus('Cannot connect to server','error');
+    showErr('Server is offline. Run: python server.py');
+  }
+})();
+
+// ── Toggle ──────────────────────────────────────────────
+async function toggleMic(){
+  if(busy)return;
+  if(recording)stopRec();
+  else await startRec();
+}
+
+// ── Start ───────────────────────────────────────────────
+async function startRec(){
+  try{
+    hideErr();
+    setStatus('Requesting mic...','processing');
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    setStatus('Recording...','recording');
+    document.getElementById('waveBars').classList.add('active');
+
+    const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus'
+              :MediaRecorder.isTypeSupported('audio/webm')?'audio/webm':'';
+    rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);
+    chunks=[];
+
+    rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
+    rec.onstop=processAudio;
+    rec.start(100);
+    recording=true;
+    setBtn('⏹️','recording');
+    document.getElementById('instructions').textContent='Click to stop recording';
+  }catch(err){
+    const msg=err.name==='NotAllowedError'?'Permission denied — click 🔒 in address bar → Allow Microphone → Refresh.'
+             :err.name==='NotFoundError'?'No microphone found.'
+             :err.name==='NotReadableError'?'Mic in use by another app.'
+             :'Mic error: '+err.message;
+    showErr(msg);setStatus('Microphone error','error');resetUI();
+  }
+}
+
+// ── Stop ────────────────────────────────────────────────
+function stopRec(){
+  if(rec&&recording){
+    rec.stop();stream.getTracks().forEach(t=>t.stop());
+    recording=false;busy=true;
+    document.getElementById('waveBars').classList.remove('active');
+    setStatus('Processing...','processing');
+    setBtn('⏳','processing');
+    document.getElementById('micBtn').disabled=true;
+    document.getElementById('instructions').textContent='Processing...';
+  }
+}
+
+// ── Process & Send ───────────────────────────────────────
+async function processAudio(){
+  try{
+    if(!chunks.length){showErr('No audio. Try again.');resetUI();return;}
+    const mime=rec.mimeType||'audio/webm';
+    const ext=mime.includes('webm')?'webm':'wav';
+    const blob=new Blob(chunks,{type:mime});
+    
+    if(blob.size<1500){showErr('Too short — speak a full sentence.');resetUI();return;}
+
+    const fd=new FormData();
+    fd.append('file',blob,'recording.'+ext);
+
+    setStatus('Thinking...','processing');
+    const res=await fetch('/voice_chat',{method:'POST',body:fd});
+    if(!res.ok)throw new Error('Server error '+res.status);
+    const data=await res.json();
+    if(data.error)throw new Error(data.error);
+
+    if(data.transcript)addMsg('user',data.transcript);
+    if(data.response)  addMsg('juno',data.response);
+
+    // ── Play TTS audio ──────────────────────────────────
+    if(data.audio_path){
+      const url='/audio/'+data.audio_path+'?t='+Date.now();
+      const player=document.getElementById('audioPlayer');
+      const audio=document.getElementById('audioEl');
+      audio.src=url;
+      player.classList.add('show');
+      audio.load();
+      audio.play().catch(e=>{
+        // autoplay blocked - visible player still shown
+        console.warn('Autoplay blocked, user can press play:',e.message);
+      });
+      setStatus('Speaking...','active');
+      audio.onended=()=>setStatus('Ready to listen','active');
+    }else{
+      setStatus('Ready to listen','active');
     }
+
+  }catch(err){
+    showErr('Error: '+err.message);
+    setStatus('Error — try again','error');
+  }finally{
+    resetUI();
+  }
 }
 
-// ── Start Recording ──────────────────────────────────────
-async function startRecording() {
-    try {
-        hideError();
-        updateStatus('🎤 Requesting microphone...','processing');
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio:{echoCancellation:true,noiseSuppression:true} });
-        updateStatus('🔴 Recording...','recording');
-
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-                       : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
-        mediaRecorder = mimeType ? new MediaRecorder(audioStream,{mimeType}) : new MediaRecorder(audioStream);
-        audioChunks   = [];
-
-        mediaRecorder.ondataavailable = e => { if(e.data.size>0) audioChunks.push(e.data); };
-        mediaRecorder.onstop = async () => {
-            if (audioChunks.length > 0) {
-                await sendToServer(new Blob(audioChunks, {type: mediaRecorder.mimeType||'audio/webm'}));
-            } else {
-                showError('No audio recorded. Please try again.'); resetUI();
-            }
-        };
-
-        mediaRecorder.start(100);
-        isRecording = true;
-        micButton.classList.add('recording');
-        micButton.textContent        = '⏹️';
-        instructionsDiv.textContent  = 'Click to stop recording';
-
-    } catch(err) {
-        console.error(err);
-        let msg = err.name==='NotAllowedError'  ? 'Permission denied. Click 🔒 in address bar → Allow Microphone → Refresh page.'
-                : err.name==='NotFoundError'    ? 'No microphone found. Please connect one.'
-                : err.name==='NotReadableError' ? 'Microphone is in use by another app.'
-                : 'Microphone error: ' + err.message;
-        showError(msg); updateStatus('❌ Microphone error','error'); resetUI();
-    }
+// ── Reset ─────────────────────────────────────────────
+function resetUI(){
+  recording=false;busy=false;
+  setBtn('🎤');
+  document.getElementById('micBtn').disabled=false;
+  document.getElementById('instructions').textContent='Click the microphone to start';
+  document.getElementById('waveBars').classList.remove('active');
 }
-
-// ── Stop Recording ───────────────────────────────────────
-function stopRecording() {
-    if (mediaRecorder && isRecording) {
-        mediaRecorder.stop();
-        audioStream.getTracks().forEach(t => t.stop());
-        isRecording = false;
-        updateStatus('⏳ Processing...','processing');
-        micButton.classList.remove('recording');
-        micButton.classList.add('processing');
-        micButton.textContent       = '⏳';
-        instructionsDiv.textContent = 'Processing your request...';
-    }
-}
-
-// ── Send to Server ───────────────────────────────────────
-async function sendToServer(blob) {
-    try {
-        updateStatus('📤 Sending to server...','processing');
-        const ext = blob.type.includes('webm') ? 'webm' : 'wav';
-        const fd  = new FormData();
-        fd.append('file', blob, 'recording.' + ext);
-
-        const res  = await fetch('/voice_chat', {method:'POST', body:fd});
-        if (!res.ok) throw new Error('Server error: ' + res.status);
-        const data = await res.json();
-
-        if (data.error) throw new Error(data.error);
-
-        if (data.transcript) {
-            transcriptText.textContent = data.transcript;
-            transcriptBox.classList.add('active');
-        }
-        if (data.response) {
-            responseText.textContent = data.response;
-            responseBox.classList.add('active');
-        } else { throw new Error('No response from JUNO'); }
-
-        updateStatus('✅ Ready to listen','active');
-    } catch(err) {
-        console.error(err);
-        showError('Error: ' + err.message);
-        updateStatus('❌ Error occurred','error');
-    } finally { resetUI(); }
-}
-
-// ── Reset ─────────────────────────────────────────────────
-function resetUI() {
-    micButton.classList.remove('recording','processing');
-    micButton.textContent       = '🎤';
-    instructionsDiv.textContent = 'Click the microphone to start';
-}
-
-// ── Button Handler ────────────────────────────────────────
-micButton.addEventListener('click', () => {
-    if (isRecording) stopRecording(); else startRecording();
-});
-
-// ── Init ──────────────────────────────────────────────────
-checkServer();
 </script>
 </body>
 </html>
