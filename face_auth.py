@@ -42,37 +42,24 @@ def detect_face_opencv(frame):
 
 
 def detect_face(frame):
-    """Detect face using best available method"""
-    if USE_FACE_RECOGNITION:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        try:
-            face_locations = face_recognition.face_locations(rgb_frame, model='hog')
-            return face_locations
-        except:
-            return detect_face_opencv(frame)
-    else:
-        return detect_face_opencv(frame)
+    """Detect face using OpenCV (consistent method)"""
+    return detect_face_opencv(frame)
 
 
 def extract_encoding(frame, face_location):
-    """Extract face encoding"""
-    if USE_FACE_RECOGNITION:
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb_frame, [face_location])
-        return encodings[0] if len(encodings) > 0 else None
-    else:
-        # OpenCV fallback - use simple features
-        top, right, bottom, left = face_location
-        face_roi = frame[top:bottom, left:right]
-        
-        if face_roi.size == 0:
-            return None
-        
-        # Resize to fixed size and flatten
-        face_resized = cv2.resize(face_roi, (64, 64))
-        gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
-        encoding = gray.flatten().astype(np.float32) / 255.0
-        return encoding
+    """Extract face encoding using OpenCV (consistent with registration)"""
+    # Always use OpenCV method for consistency
+    top, right, bottom, left = face_location
+    face_roi = frame[top:bottom, left:right]
+    
+    if face_roi.size == 0:
+        return None
+    
+    # Resize to fixed size and flatten (64x64 = 4096 dimensions)
+    face_resized = cv2.resize(face_roi, (64, 64))
+    gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+    encoding = gray.flatten().astype(np.float32) / 255.0
+    return encoding
 
 
 def verify_owner(frame, threshold=0.5):
@@ -119,34 +106,33 @@ def verify_owner(frame, threshold=0.5):
     if current_encoding is None:
         return False, 0.0, "Could not extract face features"
     
-    # Compare with registered encodings
-    if USE_FACE_RECOGNITION:
-        matches = face_recognition.compare_faces(owner_encodings, current_encoding, tolerance=threshold)
-        distances = face_recognition.face_distance(owner_encodings, current_encoding)
-    else:
-        # Fallback comparison using cosine similarity
-        matches = []
-        distances = []
-        for reg_encoding in owner_encodings:
-            similarity = np.dot(current_encoding, reg_encoding) / (
-                np.linalg.norm(current_encoding) * np.linalg.norm(reg_encoding) + 1e-6
-            )
-            distance = 1 - similarity
-            distances.append(distance)
-            matches.append(distance < threshold)
+    # Compare with registered encodings using cosine similarity (OpenCV method)
+    matches = []
+    distances = []
+    for reg_encoding in owner_encodings:
+        # Ensure both encodings have same shape
+        if len(current_encoding) != len(reg_encoding):
+            continue
+            
+        similarity = np.dot(current_encoding, reg_encoding) / (
+            np.linalg.norm(current_encoding) * np.linalg.norm(reg_encoding) + 1e-6
+        )
+        distance = 1 - similarity
+        distances.append(distance)
+        matches.append(distance < threshold)
     
     match_count = sum(matches)
     match_ratio = match_count / len(owner_encodings)
-    min_distance = min(distances) if distances else 1.0
-    avg_distance = np.mean(distances) if distances else 1.0
+    min_distance = float(min(distances)) if distances else 1.0
+    avg_distance = float(np.mean(distances)) if distances else 1.0
     
     # Determine if authenticated
     # Need at least 60% of samples to match and min distance < threshold
-    is_authenticated = match_ratio >= 0.6 and min_distance < threshold
+    is_authenticated = bool(match_ratio >= 0.6 and min_distance < threshold)
     
-    # Calculate confidence (0-100)
+    # Calculate confidence (0-100) as native Python float
     if is_authenticated:
-        confidence = max(70, min(95, (1 - min_distance) * 100))
+        confidence = float(max(70, min(95, (1 - min_distance) * 100)))
         message = f"Owner verified ({match_count}/{len(owner_encodings)} matches)"
     else:
         confidence = 0.0

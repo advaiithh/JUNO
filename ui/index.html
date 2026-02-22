@@ -457,6 +457,9 @@
             <div class="logo">🤖</div>
             <h1>JUNO</h1>
             <p class="subtitle">Your AI Voice Assistant</p>
+            <div id="authStatus" style="font-size: 0.9em; color: #4ade80; margin-top: 10px;">
+                <span id="authIndicator">✓ Authenticated</span>
+            </div>
         </div>
 
         <div class="status-bar">
@@ -504,14 +507,73 @@
             <button class="btn btn-secondary" id="viewHistoryBtn" onclick="toggleHistory()">
                 📜 View History
             </button>
+            <button class="btn btn-secondary" id="logoutBtn" onclick="logout()" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);">
+                🚪 Logout
+            </button>
         </div>
     </div>
 
     <script>
+        // Global variables
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
         let conversationHistory = [];
+        
+        // ==================== AUTHENTICATION CHECK ====================
+        // Check if user is authenticated before allowing UI access
+        (async function enforceAuthentication() {
+            try {
+                // First check if face auth is available on server
+                const statusResponse = await fetch('/status');
+                const statusData = await statusResponse.json();
+                
+                // If face auth not available, skip enforcement
+                if (!statusData.face_auth_available) {
+                    console.log('⚠️ Face authentication not enabled on server - allowing access');
+                    return;
+                }
+                
+                // Check URL parameter - if coming from auth page, set the session
+                const urlParams = new URLSearchParams(window.location.search);
+                const fromAuth = urlParams.get('authenticated');
+                
+                if (fromAuth === 'true') {
+                    // Coming from successful authentication
+                    console.log('✅ Authentication verified via URL parameter');
+                    return;
+                }
+                
+                // Check for existing session token
+                const sessionToken = sessionStorage.getItem('juno_session');
+                
+                if (!sessionToken) {
+                    // No session token - redirect to auth
+                    console.log('❌ No session token found - redirecting to authentication');
+                    window.location.replace('auth.html');
+                    return;
+                }
+                
+                // Verify session token with server
+                const response = await fetch(`/auth/check_session?token=${sessionToken}`);
+                const result = await response.json();
+                
+                if (!result.valid) {
+                    // Invalid token - redirect to auth
+                    console.log('❌ Invalid session token - redirecting to authentication');
+                    sessionStorage.removeItem('juno_session');
+                    window.location.replace('auth.html');
+                    return;
+                }
+                
+                // Valid session - user can access UI
+                console.log('✅ Authentication verified - access granted');
+            } catch (error) {
+                console.error('⚠️ Error checking authentication:', error);
+                // Don't redirect on error - allow access but log it
+                console.log('Allowing access despite error (might be network issue)');
+            }
+        })();
 
         // Create floating particles
         function createParticles() {
@@ -787,10 +849,12 @@
                 // If face auth not available, skip check
                 if (!statusData.face_auth_available) {
                     console.log('Face authentication not enabled');
+                    document.getElementById('authStatus').style.display = 'none';
                     return true;
                 }
             } catch (error) {
                 console.log('Cannot check authentication status');
+                document.getElementById('authStatus').style.display = 'none';
                 return true;
             }
             
@@ -812,11 +876,33 @@
                 }
                 
                 console.log('✓ Authenticated session verified');
+                document.getElementById('authIndicator').textContent = `✓ Authenticated (${Math.round(result.confidence)}%)`;
                 return true;
             } catch (error) {
                 console.error('Session verification error:', error);
                 // Allow access if cannot verify (server might not have auth module)
+                document.getElementById('authStatus').style.display = 'none';
                 return true;
+            }
+        }
+
+        // Logout function
+        async function logout() {
+            const sessionToken = sessionStorage.getItem('juno_session');
+            
+            if (confirm('Are you sure you want to logout?')) {
+                try {
+                    if (sessionToken) {
+                        await fetch(`/auth/logout?token=${sessionToken}`);
+                    }
+                    sessionStorage.removeItem('juno_session');
+                    window.location.href = 'auth.html';
+                } catch (error) {
+                    console.error('Logout error:', error);
+                    // Force logout anyway
+                    sessionStorage.removeItem('juno_session');
+                    window.location.href = 'auth.html';
+                }
             }
         }
 
