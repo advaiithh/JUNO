@@ -2,6 +2,28 @@
 
 A sophisticated AI assistant featuring real-time face recognition with multi-person support, voice interaction capabilities, and memory tracking.
 
+## ⚡ Quick Start
+
+**Easiest Way to Run JUNO:**
+
+```batch
+# Double-click this file:
+START_JUNO.bat
+```
+
+This will:
+1. Start the JUNO server automatically
+2. Open face authentication in your browser
+3. After face verification → Access voice assistant!
+
+**Manual Start:**
+```powershell
+python server.py
+# Then open: http://localhost:8000/ui/auth.html
+```
+
+---
+
 ## 🌟 Key Features
 
 ### Advanced Face Recognition
@@ -142,7 +164,7 @@ Tracks and logs:
 
 ## 📁 Project Structure
 
-```
+```open_juno_ui.bat
 JUNO/
 ├── recognition_advanced.py      # Main face recognition system
 ├── arcface_model.py            # ArcFace PyTorch implementation

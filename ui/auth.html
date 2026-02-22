@@ -66,10 +66,7 @@
         }
 
         .button-container {
-            display: flex;
-            gap: 15px;
-            justify-content: center;
-            margin: 20px 0;
+            display: none; /* Hidden - automatic verification */
         }
 
         button {
@@ -210,16 +207,15 @@
 <body>
     <div class="container">
         <h1>🎭 JUNO Face Authentication</h1>
-        <p class="subtitle">Verify your identity to access JUNO</p>
+        <p class="subtitle">Automatic face verification in progress...</p>
 
         <div class="instructions">
             <h3>📋 Instructions</h3>
             <ul>
-                <li>Click "Start Camera" to begin</li>
                 <li>Position your face in the center</li>
                 <li>Ensure good lighting</li>
                 <li>Look directly at the camera</li>
-                <li>Click "Verify Face" when ready</li>
+                <li>Verification happens automatically</li>
             </ul>
         </div>
 
@@ -228,11 +224,6 @@
             <div class="face-outline"></div>
         </div>
         <canvas id="canvas"></canvas>
-
-        <div class="button-container">
-            <button id="startBtn">📷 Start Camera</button>
-            <button id="verifyBtn">✓ Verify Face</button>
-        </div>
 
         <div id="status"></div>
 
@@ -243,16 +234,16 @@
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        const startBtn = document.getElementById('startBtn');
-        const verifyBtn = document.getElementById('verifyBtn');
         const proceedBtn = document.getElementById('proceedBtn');
         const status = document.getElementById('status');
         
         let stream = null;
         let sessionToken = null;
+        let verificationInterval = null;
+        let isVerifying = false;
 
-        // Start camera
-        startBtn.addEventListener('click', async () => {
+        // Automatically start camera on page load
+        async function startCamera() {
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
@@ -263,26 +254,38 @@
                 });
                 video.srcObject = stream;
                 
-                startBtn.disabled = true;
-                startBtn.textContent = '📷 Camera Active';
-                verifyBtn.style.display = 'inline-block';
+                showStatus('📸 Camera active - Detecting face...', 'info');
                 
-                showStatus('Camera started. Position your face and click "Verify Face"', 'info');
+                // Wait for video to be ready, then start continuous verification
+                video.onloadedmetadata = () => {
+                    startContinuousVerification();
+                };
             } catch (error) {
-                showStatus('Error: Could not access camera. Please allow camera permissions.', 'error');
+                showStatus('❌ Error: Could not access camera. Please allow camera permissions and refresh.', 'error');
                 console.error('Camera error:', error);
             }
-        });
+        }
+
+        // Continuous face verification
+        function startContinuousVerification() {
+            // Verify every 2 seconds
+            verificationInterval = setInterval(async () => {
+                if (isVerifying || sessionToken) {
+                    return; // Skip if already verifying or authenticated
+                }
+                
+                await verifyFace();
+            }, 2000);
+        }
 
         // Verify face
-        verifyBtn.addEventListener('click', async () => {
-            if (!stream) {
-                showStatus('Please start the camera first', 'warning');
+        async function verifyFace() {
+            if (!stream || isVerifying) {
                 return;
             }
 
-            verifyBtn.disabled = true;
-            verifyBtn.innerHTML = 'Verifying... <span class="loading"></span>';
+            isVerifying = true;
+            showStatus('🔍 Verifying face...', 'info');
             
             try {
                 // Capture frame from video
@@ -306,8 +309,12 @@
                 
                 if (result.authenticated) {
                     sessionToken = result.session_token;
+                    
+                    // Stop verification
+                    clearInterval(verificationInterval);
+                    
                     showStatus(
-                        `✓ Authentication Successful! (Confidence: ${result.confidence}%) - ${result.message}`,
+                        `✅ Authentication Successful! Welcome! (${result.confidence.toFixed(1)}%)`,
                         'success'
                     );
                     
@@ -319,32 +326,35 @@
                     
                     // Show proceed button
                     proceedBtn.style.display = 'block';
-                    verifyBtn.style.display = 'none';
-                    startBtn.style.display = 'none';
+                    
+                    // Auto-redirect after 2 seconds
+                    setTimeout(() => {
+                        proceedToJuno();
+                    }, 2000);
                 } else {
                     showStatus(
-                        `✗ Authentication Failed: ${result.message}. Please try again.`,
-                        'error'
+                        `🔍 Searching for registered face... (${result.message})`,
+                        'warning'
                     );
-                    verifyBtn.disabled = false;
-                    verifyBtn.textContent = '✓ Verify Face';
                 }
             } catch (error) {
-                showStatus(`Error during verification: ${error.message}`, 'error');
-                verifyBtn.disabled = false;
-                verifyBtn.textContent = '✓ Verify Face';
+                showStatus(`⚠️ Verification error: ${error.message}`, 'warning');
                 console.error('Verification error:', error);
+            } finally {
+                isVerifying = false;
             }
-        });
+        }
 
         // Proceed to main app
-        proceedBtn.addEventListener('click', () => {
+        function proceedToJuno() {
             if (sessionToken) {
-                // Store session token and redirect
+                // Store session token and redirect with auth parameter
                 sessionStorage.setItem('juno_session', sessionToken);
-                window.location.href = 'index.html';
+                window.location.href = 'index.html?authenticated=true';
             }
-        });
+        }
+        
+        proceedBtn.addEventListener('click', proceedToJuno);
 
         // Helper function to show status messages
         function showStatus(message, type) {
@@ -361,15 +371,23 @@
                     const result = await response.json();
                     
                     if (result.valid) {
-                        showStatus('Already authenticated! Redirecting...', 'success');
+                        showStatus('✅ Already authenticated! Redirecting...', 'success');
                         setTimeout(() => {
-                            window.location.href = 'index.html';
+                            window.location.href = 'index.html?authenticated=true';
                         }, 1500);
+                        return;
+                    } else {
+                        // Invalid token, clear it
+                        sessionStorage.removeItem('juno_session');
                     }
                 } catch (error) {
                     console.error('Session check error:', error);
+                    sessionStorage.removeItem('juno_session');
                 }
             }
+            
+            // Start automatic camera and verification
+            startCamera();
         });
     </script>
 </body>

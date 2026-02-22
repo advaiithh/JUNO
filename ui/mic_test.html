@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microphone Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 500px;
+        }
+        h1 { color: #667eea; margin-bottom: 20px; }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            margin: 10px;
+            transition: all 0.3s;
+        }
+        #testBtn {
+            background: #667eea;
+            color: white;
+        }
+        #testBtn:hover {
+            background: #5568d3;
+            transform: scale(1.05);
+        }
+        #recordBtn {
+            background: #ef4444;
+            color: white;
+        }
+        #recordBtn:hover {
+            background: #dc2626;
+            transform: scale(1.05);
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+        .success { background: #d1fae5; color: #065f46; }
+        .error { background: #fee2e2; color: #991b1b; }
+        .info { background: #dbeafe; color: #1e40af; }
+        #visualizer {
+            display: flex;
+            justify-content: center;
+            gap: 5px;
+            height: 100px;
+            align-items: center;
+            margin: 20px 0;
+        }
+        .bar {
+            width: 5px;
+            background: #667eea;
+            border-radius: 3px;
+            transition: height 0.1s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Microphone Test</h1>
+        <p>This will test if your browser can access the microphone</p>
+        
+        <button id="testBtn" onclick="testMicrophone()">Test Microphone Access</button>
+        <button id="recordBtn" onclick="toggleRecording()" style="display:none;">Start Recording</button>
+        
+        <div id="visualizer">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+        </div>
+        
+        <div id="status"></div>
+        <div id="details" style="margin-top: 20px; text-align: left; font-size: 14px;"></div>
+    </div>
+
+    <script>
+        let stream = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let audioContext = null;
+        let analyser = null;
+        let animationId = null;
+
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = type;
+        }
+
+        function showDetails(html) {
+            document.getElementById('details').innerHTML = html;
+        }
+
+        async function testMicrophone() {
+            showStatus('Testing microphone access...', 'info');
+            showDetails('');
+            
+            try {
+                // Request microphone access
+                console.log('Requesting microphone access...');
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                console.log('✅ Microphone access granted!');
+                showStatus('✅ Microphone access granted!', 'success');
+                
+                // Get audio tracks info
+                const audioTracks = stream.getAudioTracks();
+                let details = '<strong>Microphone Details:</strong><br>';
+                audioTracks.forEach((track, i) => {
+                    details += `Track ${i + 1}: ${track.label}<br>`;
+                    details += `Enabled: ${track.enabled}<br>`;
+                    details += `Muted: ${track.muted}<br>`;
+                    details += `Ready State: ${track.readyState}<br>`;
+                });
+                
+                // Check MediaRecorder support
+                if (typeof MediaRecorder !== 'undefined') {
+                    details += '<br><strong>MediaRecorder:</strong> ✅ Supported<br>';
+                    details += `MIME types supported:<br>`;
+                    const mimeTypes = ['audio/webm', 'audio/wav', 'audio/ogg', 'audio/mp4'];
+                    mimeTypes.forEach(type => {
+                        if (MediaRecorder.isTypeSupported(type)) {
+                            details += `✅ ${type}<br>`;
+                        }
+                    });
+                } else {
+                    details += '<br><strong>MediaRecorder:</strong> ❌ Not supported<br>';
+                }
+                
+                showDetails(details);
+                
+                // Show record button
+                document.getElementById('recordBtn').style.display = 'inline-block';
+                
+                // Setup visualizer
+                setupVisualizer();
+                
+            } catch (error) {
+                console.error('❌ Error:', error);
+                showStatus('❌ Error: ' + error.message, 'error');
+                
+                let details = '<strong>Error Details:</strong><br>';
+                details += `Name: ${error.name}<br>`;
+                details += `Message: ${error.message}<br>`;
+                
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    details += '<br><strong>Solution:</strong> You need to allow microphone access in your browser.<br>';
+                    details += '1. Click the lock icon in the address bar<br>';
+                    details += '2. Find "Microphone" and change to "Allow"<br>';
+                    details += '3. Refresh the page and try again';
+                } else if (error.name === 'NotFoundError') {
+                    details += '<br><strong>Solution:</strong> No microphone found. Please connect a microphone.';
+                } else if (error.name === 'NotReadableError') {
+                    details += '<br><strong>Solution:</strong> Microphone is being used by another application.';
+                }
+                
+                showDetails(details);
+            }
+        }
+
+        function setupVisualizer() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                analyser.fftSize = 256;
+                
+                visualize();
+            } catch (error) {
+                console.error('Visualizer error:', error);
+            }
+        }
+
+        function visualize() {
+            if (!analyser) return;
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            function draw() {
+                analyser.getByteFrequencyData(dataArray);
+                
+                const bars = document.querySelectorAll('.bar');
+                const step = Math.floor(bufferLength / bars.length);
+                
+                bars.forEach((bar, i) => {
+                    const value = dataArray[i * step];
+                    const height = (value / 255) * 80 + 20;
+                    bar.style.height = height + 'px';
+                });
+                
+                animationId = requestAnimationFrame(draw);
+            }
+            
+            draw();
+        }
+
+        async function toggleRecording() {
+            const btn = document.getElementById('recordBtn');
+            
+            if (!isRecording) {
+                // Start recording
+                try {
+                    audioChunks = [];
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                        console.log('Audio chunk received:', event.data.size, 'bytes');
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        console.log('Recording stopped. Total size:', audioBlob.size, 'bytes');
+                        showStatus(`✅ Recorded ${audioBlob.size} bytes of audio`, 'success');
+                        
+                        // Create download link
+                        const url = URL.createObjectURL(audioBlob);
+                        const details = document.getElementById('details');
+                        details.innerHTML += `<br><br><audio controls src="${url}"></audio><br>`;
+                        details.innerHTML += `<a href="${url}" download="test_recording.wav">Download Recording</a>`;
+                    };
+                    
+                    mediaRecorder.start();
+                    isRecording = true;
+                    btn.textContent = 'Stop Recording';
+                    btn.style.background = '#dc2626';
+                    showStatus('🔴 Recording... Click to stop', 'info');
+                    
+                } catch (error) {
+                    console.error('Recording error:', error);
+                    showStatus('❌ Recording error: ' + error.message, 'error');
+                }
+                
+            } else {
+                // Stop recording
+                mediaRecorder.stop();
+                isRecording = false;
+                btn.textContent = 'Start Recording';
+                btn.style.background = '#ef4444';
+            }
+        }
+    </script>
+</body>
+</html>

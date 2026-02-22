@@ -462,6 +462,17 @@ async def check_session(token: str):
     return {"valid": False}
 
 
+@app.get("/auth/logout")
+async def logout(token: str):
+    """
+    Logout and invalidate session token
+    """
+    if token in authenticated_users:
+        del authenticated_users[token]
+        return {"success": True, "message": "Logged out successfully"}
+    return {"success": False, "message": "Invalid token"}
+
+
 # ==================== CHAT ENDPOINTS ====================
 
 @app.post("/chat")
@@ -676,9 +687,9 @@ async def voice_chat(file: UploadFile = File(...)):
 
 @app.get("/")
 def root():
-    """Redirect to web UI"""
+    """Redirect to authentication page"""
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/ui/index.html")
+    return RedirectResponse(url="/ui/auth.html")
 
 @app.get("/audio/{filename}")
 def get_audio(filename: str):
