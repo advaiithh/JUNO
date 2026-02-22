@@ -617,21 +617,35 @@
         // Start recording
         async function startRecording() {
             try {
+                console.log('🎤 Requesting microphone access...');
+                updateStatus('🎤 Requesting microphone access...', false);
+                
+                // Check if getUserMedia is supported
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('getUserMedia not supported in this browser');
+                }
+                
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                console.log('✅ Microphone access granted');
+                
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
 
                 mediaRecorder.ondataavailable = (event) => {
                     audioChunks.push(event.data);
+                    console.log('📦 Audio chunk received:', event.data.size, 'bytes');
                 };
 
                 mediaRecorder.onstop = async () => {
+                    console.log('⏹️ Recording stopped, processing audio...');
                     const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    console.log('📤 Sending audio to server:', audioBlob.size, 'bytes');
                     await sendAudioToServer(audioBlob);
                 };
 
                 mediaRecorder.start();
                 isRecording = true;
+                console.log('🔴 Recording started');
 
                 // Update UI
                 const voiceBtn = document.getElementById('voiceBtn');
@@ -647,8 +661,21 @@
                 updateStatus('🔴 Recording...', true);
 
             } catch (error) {
-                console.error('Error accessing microphone:', error);
-                alert('Could not access microphone. Please grant permission and try again.');
+                console.error('❌ Microphone error:', error);
+                
+                let errorMessage = 'Could not access microphone. ';
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    errorMessage += 'Permission denied. Click the 🔒 icon in address bar and allow microphone access.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage += 'No microphone found. Please connect a microphone.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage += 'Microphone is already in use by another application.';
+                } else {
+                    errorMessage += error.message;
+                }
+                
+                updateStatus('❌ ' + errorMessage, false);
+                alert(errorMessage + '\n\nTip: If you blocked permission, click the 🔒 icon next to the URL and set Microphone to "Allow"');
             }
         }
 
@@ -680,6 +707,7 @@
         // Send audio to server
         async function sendAudioToServer(audioBlob) {
             try {
+                console.log('📤 Sending audio to server...', audioBlob.size, 'bytes');
                 const formData = new FormData();
                 formData.append('file', audioBlob, 'recording.wav');
 
@@ -688,7 +716,14 @@
                     body: formData
                 });
 
+                console.log('📥 Server response received, status:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status} ${response.statusText}`);
+                }
+
                 const result = await response.json();
+                console.log('✅ Result:', result);
 
                 // Hide spinner
                 document.getElementById('spinner').classList.remove('active');
@@ -710,6 +745,7 @@
 
                 // Display transcript
                 if (result.transcript) {
+                    console.log('📝 Transcript:', result.transcript);
                     const transcriptArea = document.getElementById('transcriptArea');
                     const transcriptText = document.getElementById('transcriptText');
                     transcriptText.textContent = result.transcript;
@@ -721,6 +757,7 @@
 
                 // Display response
                 if (result.response) {
+                    console.log('💬 Response:', result.response);
                     addMessage('assistant', result.response);
                 }
 
@@ -732,16 +769,27 @@
                 updateStatus('✅ Ready to listen');
 
             } catch (error) {
-                console.error('Error sending audio:', error);
-                alert('Error communicating with server: ' + error.message);
+                console.error('❌ Error sending audio to server:', error);
+                
+                let errorMsg = 'Error communicating with server: ' + error.message;
+                errorMsg += '\n\nPlease check:\n';
+                errorMsg += '• Is the server running?\n';
+                errorMsg += '• Is your internet connection stable?\n';
+                errorMsg += '• Check browser console (F12) for details';
+                
+                alert(errorMsg);
                 
                 // Reset UI
                 document.getElementById('spinner').classList.remove('active');
                 const voiceBtn = document.getElementById('voiceBtn');
                 const btnIcon = document.getElementById('btnIcon');
+                const instruction = document.getElementById('instruction');
+                
                 voiceBtn.classList.remove('processing');
                 btnIcon.textContent = '🎤';
-                updateStatus('❌ Error occurred');
+                instruction.textContent = 'Click the microphone to start talking';
+                
+                updateStatus('❌ Error occurred - Try again');
             }
         }
 

@@ -268,7 +268,7 @@ def call_llm(prompt, tokens=100, system_prompt=None):
                     "num_ctx": 2048  # Reduced context window for speed
                 }
             },
-            timeout=30  # Increased timeout for initial model load
+            timeout=60  # Increased timeout for initial model load (model takes ~10s to load)
         )
         if response.status_code == 200:
             return response.json()["response"]
