@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JUNO - Voice Assistant</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f0f1a;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo { font-size: 60px; margin-bottom: 10px; }
+
+        h1 {
+            font-size: 42px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 15px;
+            margin-bottom: 40px;
+        }
+
+        /* STATUS BAR */
+        #statusBar {
+            background: #1e1e2e;
+            border: 1px solid #333;
+            border-radius: 30px;
+            padding: 12px 30px;
+            font-size: 15px;
+            color: #aaa;
+            margin-bottom: 40px;
+            min-width: 300px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+        #statusBar.recording { border-color: #ef4444; color: #ef4444; background: #2a1010; }
+        #statusBar.processing { border-color: #f59e0b; color: #f59e0b; background: #1a1800; }
+        #statusBar.success { border-color: #22c55e; color: #22c55e; background: #0a1a0a; }
+        #statusBar.error { border-color: #ef4444; color: #ef4444; background: #2a1010; }
+
+        /* MIC BUTTON */
+        #micBtn {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            font-size: 60px;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 0 40px rgba(102,126,234,0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            outline: none;
+        }
+        #micBtn:hover { transform: scale(1.07); box-shadow: 0 0 60px rgba(102,126,234,0.6); }
+        #micBtn:active { transform: scale(0.95); }
+        #micBtn.recording {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            animation: pulse 1.2s infinite;
+            box-shadow: 0 0 40px rgba(239,68,68,0.6);
+        }
+        #micBtn.processing {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            animation: spin 2s linear infinite;
+        }
+        #micBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 40px rgba(239,68,68,0.6); }
+            50% { transform: scale(1.08); box-shadow: 0 0 70px rgba(239,68,68,0.8); }
+        }
+
+        #btnLabel {
+            font-size: 13px;
+            color: #666;
+            margin-top: 16px;
+            margin-bottom: 40px;
+        }
+
+        /* CHAT BOX */
+        #chatBox {
+            width: 100%;
+            max-width: 600px;
+            background: #1e1e2e;
+            border: 1px solid #333;
+            border-radius: 16px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .msg {
+            padding: 14px 18px;
+            border-bottom: 1px solid #2a2a3a;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .msg:last-child { border-bottom: none; }
+        .msg.user { background: #1a1a2e; }
+        .msg.juno { background: #12122a; }
+        .msg-label {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+        .msg.user .msg-label { color: #667eea; }
+        .msg.juno .msg-label { color: #a855f7; }
+        .msg-text { color: #ccc; }
+
+        /* AUDIO PLAYER */
+        #audioPlayer {
+            margin-top: 20px;
+            display: none;
+        }
+        #audioPlayer audio {
+            width: 300px;
+            border-radius: 30px;
+        }
+
+        /* CLEAR BUTTON */
+        #clearBtn {
+            margin-top: 20px;
+            background: transparent;
+            border: 1px solid #333;
+            color: #666;
+            padding: 8px 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            display: none;
+        }
+        #clearBtn:hover { border-color: #666; color: #aaa; }
+    </style>
+</head>
+<body>
+
+    <div class="logo">🤖</div>
+    <h1>JUNO</h1>
+    <p class="subtitle">✓ Authenticated — AI Voice Assistant</p>
+
+    <div id="statusBar">● Ready to listen</div>
+
+    <button id="micBtn" onclick="toggleMic()">🎤</button>
+    <div id="btnLabel">Click to speak</div>
+
+    <audio id="audioEl" style="display:none"></audio>
+    <div id="audioPlayer"><audio id="audioElVisible" controls></audio></div>
+
+    <div id="chatBox"></div>
+    <button id="clearBtn" onclick="clearChat()">🗑 Clear History</button>
+
+<script>
+
+let mediaRecorder = null;
+let audioChunks   = [];
+let isRecording   = false;
+let isProcessing  = false;
+
+// ─── helpers ───────────────────────────────────────
+function setStatus(text, cls = '') {
+    const bar = document.getElementById('statusBar');
+    bar.textContent = text;
+    bar.className   = cls;
+}
+
+function setBtn(icon, label, cls = '') {
+    document.getElementById('micBtn').textContent = icon;
+    document.getElementById('micBtn').className   = cls;
+    document.getElementById('btnLabel').textContent = label;
+}
+
+function addMessage(role, text) {
+    const box = document.getElementById('chatBox');
+    box.style.display = 'block';
+    document.getElementById('clearBtn').style.display = 'inline-block';
+
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.innerHTML = `<div class="msg-label">${role === 'user' ? '🧑 You' : '🤖 JUNO'}</div>
+                     <div class="msg-text">${text}</div>`;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+function clearChat() {
+    document.getElementById('chatBox').innerHTML = '';
+    document.getElementById('chatBox').style.display = 'none';
+    document.getElementById('clearBtn').style.display = 'none';
+    document.getElementById('audioPlayer').style.display = 'none';
+    setStatus('● Ready to listen');
+    setBtn('🎤', 'Click to speak');
+}
+
+// ─── main toggle ───────────────────────────────────
+async function toggleMic() {
+    if (isProcessing) return;
+    if (isRecording) {
+        stopRecording();
+    } else {
+        await startRecording();
+    }
+}
+
+// ─── start recording ───────────────────────────────
+async function startRecording() {
+    try {
+        setStatus('Requesting microphone...', '');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // pick best supported format
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : MediaRecorder.isTypeSupported('audio/webm')
+                ? 'audio/webm'
+                : '';
+
+        mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        audioChunks   = [];
+
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop          = processAudio;
+        mediaRecorder.start(250);   // collect chunks every 250ms
+
+        isRecording = true;
+        setStatus('● Recording — click again to stop', 'recording');
+        setBtn('⏹', 'Click to stop', 'recording');
+
+    } catch (err) {
+        console.error(err);
+        let msg = 'Microphone error: ';
+        if (err.name === 'NotAllowedError')  msg += 'Permission denied. Click 🔒 in address bar → Allow Microphone → Refresh.';
+        else if (err.name === 'NotFoundError') msg += 'No microphone found. Please connect one.';
+        else if (err.name === 'NotReadableError') msg += 'Microphone is in use by another app.';
+        else msg += err.message;
+
+        setStatus('❌ ' + msg, 'error');
+        setBtn('🎤', 'Click to speak');
+        alert(msg);
+    }
+}
+
+// ─── stop recording ────────────────────────────────
+function stopRecording() {
+    if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+        isRecording   = false;
+        isProcessing  = true;
+        setStatus('⏳ Processing...', 'processing');
+        setBtn('⏳', 'Processing...', 'processing');
+        document.getElementById('micBtn').disabled = true;
+    }
+}
+
+// ─── send to server ────────────────────────────────
+async function processAudio() {
+    try {
+        const mimeType = mediaRecorder.mimeType || 'audio/webm';
+        const ext      = mimeType.includes('webm') ? '.webm' : '.wav';
+        const blob     = new Blob(audioChunks, { type: mimeType });
+
+        console.log(`Sending ${blob.size} bytes (${mimeType}) to /voice_chat`);
+
+        if (blob.size < 1000) {
+            throw new Error('Recording too short — please speak longer!');
+        }
+
+        const fd = new FormData();
+        fd.append('file', blob, 'recording' + ext);
+
+        const res  = await fetch('/voice_chat', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        console.log('Response:', data);
+
+        if (data.error) throw new Error(data.error);
+
+        // show transcript
+        if (data.transcript) addMessage('user', data.transcript);
+
+        // show AI reply
+        if (data.response) addMessage('juno', data.response);
+
+        // play audio
+        if (data.audio_path) {
+            const audioElVis = document.getElementById('audioElVisible');
+            audioElVis.src   = '/audio/' + data.audio_path;
+            document.getElementById('audioPlayer').style.display = 'block';
+            audioElVis.play().catch(() => {});
+        }
+
+        setStatus('✅ Ready to listen', 'success');
+        setTimeout(() => setStatus('● Ready to listen', ''), 3000);
+
+    } catch (err) {
+        console.error(err);
+        setStatus('❌ Error: ' + err.message, 'error');
+        addMessage('juno', '⚠️ Error: ' + err.message);
+    } finally {
+        isProcessing = false;
+        setBtn('🎤', 'Click to speak');
+        document.getElementById('micBtn').disabled = false;
+    }
+}
+
+// ─── auto mic permission on load ───────────────────
+window.addEventListener('load', () => {
+    // warm up: request mic silently so popup appears immediately
+    navigator.permissions && navigator.permissions.query({ name: 'microphone' }).then(result => {
+        console.log('Microphone permission state:', result.state);
+        if (result.state === 'denied') {
+            setStatus('❌ Microphone blocked — click 🔒 in address bar → Allow → Refresh', 'error');
+        }
+    });
+});
+
+</script>
+</body>
+</html>

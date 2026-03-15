@@ -64,6 +64,7 @@ authenticated_users = {}  # Store authenticated session tokens
 
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3.2:1b"  # Fast 1B model (~2-3s) — change to llama3.1:8b for higher quality
 PIPER_EXE = "piper/piper.exe"
 
 # Load active voice from config
@@ -95,7 +96,7 @@ else:
 # Conversation memory persistence
 MEMORY_FILE = "conversation_memory.json"
 conversation_history = []
-MAX_HISTORY = 20  # Increased to remember more context
+MAX_HISTORY = 6  # Keep short for speed (fewer tokens = faster LLM)
 
 def load_conversation_memory():
     """Load conversation history from file"""
@@ -122,57 +123,79 @@ def save_conversation_memory():
 # Load existing memory on startup
 load_conversation_memory()
 
-# Simple command processor
-def process_command(text):
-    """Check if text is a system command"""
+# ── Multi-command processor ──────────────────────────────────────────────────
+def extract_all_commands(text):
+    """Scan text for ALL commands. Returns list of (type, value) tuples.
+    Empty list means no commands found → fall through to LLM."""
     text_lower = text.lower().strip()
-    
-    # Time commands
-    if any(word in text_lower for word in ["time", "clock", "what time"]):
-        current_time = datetime.now().strftime("%I:%M %p")
-        return True, f"The current time is {current_time}"
-    
-    # Date commands
-    if any(word in text_lower for word in ["date", "today", "what day"]):
-        current_date = datetime.now().strftime("%B %d, %Y")
-        return True, f"Today is {current_date}"
-    
+    commands = []
+
+    # Time
+    if any(w in text_lower for w in ["time", "clock", "what time"]):
+        commands.append(("reply", f"The current time is {datetime.now().strftime('%I:%M %p')}"))
+
+    # Date
+    if any(w in text_lower for w in ["date", "today", "what day"]):
+        commands.append(("reply", f"Today is {datetime.now().strftime('%B %d, %Y')}"))
+
     # Clear memory
     if "clear memory" in text_lower or "forget everything" in text_lower:
-        return True, "CLEAR_MEMORY"
-    
-    # Music/song detection - Enhanced with Malayalam and better detection
-    music_keywords_en = ["song", "music", "singing", "sing", "play", "what song", "what music", 
-                         "identify song", "name that song", "shazam", "recognize song", "find song",
-                         "search song", "what is this song", "which song", "song name"]
-    
-    # Malayalam keywords for music/song
-    music_keywords_ml = ["പാട്ട്", "ഗാനം", "സംഗീതം", "എന്ത് പാട്ട്", "പാട്ട് പേര്", "ഗാനം പേര്",
-                        "ഈ പാട്ട്", "ഏത് പാട്ട്", "പാട്ട് കണ്ടെത്തുക", "ഗാനം കണ്ടെത്തുക"]
-    
-    # Check both English and Malayalam
-    if any(keyword in text_lower for keyword in music_keywords_en) or \
-       any(keyword in text for keyword in music_keywords_ml):
-        return True, "MUSIC_DETECTION_REQUESTED"
-    
-    # Wake word detection - simplified to "talk to me"
+        commands.append(("special", "CLEAR_MEMORY"))
+
+    # Music / song detection (English + Malayalam)
+    music_kw_en = ["song", "music", "singing", "sing", "play", "what song", "what music",
+                   "identify song", "name that song", "shazam", "recognize song", "find song",
+                   "search song", "what is this song", "which song", "song name"]
+    music_kw_ml = ["പാട്ട്", "ഗാനം", "സംഗീതം", "എന്ത് പാട്ട്", "പാട്ട് പേര്", "ഗാനം പേര്",
+                   "ഈ പാട്ട്", "ഏത് പാട്ട്", "പാട്ട് കണ്ടെത്തുക", "ഗാനം കണ്ടെത്തുക"]
+    if any(k in text_lower for k in music_kw_en) or any(k in text for k in music_kw_ml):
+        commands.append(("special", "MUSIC_DETECTION_REQUESTED"))
+
+    # Wake word
     if "talk to me" in text_lower:
-        return True, "WAKE_WORD_DETECTED"
-    
-    # Application launch commands
-    app_commands = {
-        "notepad": ["notepad", "open notepad", "launch notepad", "start notepad"],
-        "calculator": ["calculator", "calc", "open calculator", "launch calculator"],
+        commands.append(("reply", "I'm listening! How can I help you?"))
+
+    # App launch commands
+    app_map = {
+        "notepad":       ["notepad", "open notepad", "launch notepad", "start notepad"],
+        "calculator":    ["calculator", "calc", "open calculator", "launch calculator"],
         "file explorer": ["file explorer", "explorer", "open file explorer", "open files"],
-        "browser": ["browser", "open browser", "chrome", "firefox", "open chrome"],
-        "terminal": ["terminal", "cmd", "command prompt", "open terminal"],
+        "browser":       ["browser", "open browser", "chrome", "firefox", "open chrome"],
+        "terminal":      ["terminal", "cmd", "command prompt", "open terminal"],
     }
-    
-    for app, keywords in app_commands.items():
-        if any(keyword in text_lower for keyword in keywords):
-            return True, f"OPEN_{app.upper().replace(' ', '_')}"
-    
-    return False, None
+    for app, keywords in app_map.items():
+        if any(k in text_lower for k in keywords):
+            commands.append(("app", app))
+
+    return commands  # empty → no commands detected
+
+
+def handle_all_commands(commands, user_text=""):
+    """Execute every detected command and return a single combined response."""
+    global conversation_history
+    parts = []
+    for cmd_type, cmd_value in commands:
+        if cmd_type == "reply":
+            parts.append(cmd_value)
+        elif cmd_type == "special":
+            if cmd_value == "CLEAR_MEMORY":
+                conversation_history = []
+                save_conversation_memory()
+                parts.append("Memory cleared!")
+            elif cmd_value == "MUSIC_DETECTION_REQUESTED":
+                music_reply = call_llm(
+                    f"user: {user_text}\nassistant:",
+                    tokens=80,
+                    system_prompt=(
+                        "The user is asking about music or a song. "
+                        "Suggest Shazam or Google Sound Search if they want to identify a song. "
+                        "Be brief (1-2 sentences)."
+                    )
+                )
+                parts.append(music_reply)
+        elif cmd_type == "app":
+            parts.append(launch_application(cmd_value, user_text))
+    return "  ".join(parts)
 
 def launch_application(app_name, user_text=""):
     """Launch applications based on command"""
@@ -246,10 +269,8 @@ def call_llm(prompt, tokens=100, system_prompt=None):
         # Enhanced system prompt for multilingual support
         if system_prompt is None:
             system_prompt = (
-                "You are JUNO, a helpful AI assistant. "
-                "You can understand and respond in English, Malayalam, and other languages. "
-                "Respond naturally in the same language the user uses. "
-                "Be helpful, friendly, and concise."
+                "You are JUNO, a voice assistant. Be concise (1-2 sentences max). "
+                "Respond in the same language the user uses."
             )
         
         full_prompt = f"{system_prompt}\n\n{prompt}"
@@ -257,18 +278,20 @@ def call_llm(prompt, tokens=100, system_prompt=None):
         response = requests.post(
             OLLAMA_URL,
             json={
-                "model": "llama3.1:8b",
+                "model": OLLAMA_MODEL,
                 "prompt": full_prompt,
                 "stream": False,
+                "keep_alive": "10m",   # Keep model in RAM for 10 minutes
                 "options": {
                     "num_predict": tokens,
                     "temperature": 0.5,
                     "top_k": 20,
                     "top_p": 0.85,
-                    "num_ctx": 1024  # Reduced context window for speed
+                    "num_ctx": 512,   # Small context = fast
+                    "num_thread": 8   # Use all CPU threads
                 }
             },
-            timeout=60  # Increased timeout for initial model load (model takes ~10s to load)
+            timeout=60
         )
         if response.status_code == 200:
             return response.json()["response"]
@@ -484,35 +507,35 @@ async def chat(request: dict):
     if not prompt:
         return {"error": "No message provided", "response": None, "audio_path": None}
 
-    # Step 1: Check if it's a system command (FAST pattern matching)
-    is_command, command_response = process_command(prompt)
-    
-    if is_command:
-        reply = command_response
+    # Step 1: Try to match ALL system commands (FAST, no LLM needed)
+    commands = extract_all_commands(prompt)
+
+    if commands:
+        print(f"[INFO] {len(commands)} command(s) detected in: {prompt}")
+        reply = handle_all_commands(commands, prompt)
     else:
-        # Step 2: Normal conversation with LLM
+        # Step 2: No commands found — use LLM
         conversation_history.append({"role": "user", "content": prompt})
 
         if len(conversation_history) > MAX_HISTORY:
             conversation_history = conversation_history[-MAX_HISTORY:]
 
-        # Build compact prompt
         full_prompt = ""
         for msg in conversation_history:
             full_prompt += f"{msg['role']}: {msg['content']}\n"
         full_prompt += "assistant:"
 
-        reply = call_llm(full_prompt, tokens=50)  # Reduced tokens for faster response
+        reply = call_llm(full_prompt, tokens=50)
 
         conversation_history.append({"role": "assistant", "content": reply})
-        save_conversation_memory()  # Save after each exchange
+        save_conversation_memory()
 
     # Generate audio if TTS is available
     audio_file = None
     if TTS_AVAILABLE:
         audio_file, _ = synthesize_speech(reply)
 
-    return {"response": reply, "audio_path": audio_file, "command_executed": is_command}
+    return {"response": reply, "audio_path": audio_file, "command_executed": bool(commands)}
 
 
 @app.post("/stt")
@@ -603,56 +626,29 @@ async def voice_chat(file: UploadFile = File(...)):
         
         print(f"[INFO] Transcript: {user_text}")
         
-        # Step 2: Check for commands (FAST pattern matching, no LLM)
-        is_command, command_response = process_command(user_text)
-        
-        if is_command:
-            print(f"[INFO] Command detected: {user_text}")
-            if command_response == "MUSIC_DETECTION_REQUESTED":
-                # Music detection - enhanced prompt for better understanding
-                reply = call_llm(
-                    f"user: {user_text}\n"
-                    f"The user is asking about music or a song. "
-                    f"They might be:\n"
-                    f"1. Asking to identify a song they're singing or playing\n"
-                    f"2. Asking about a specific song\n"
-                    f"3. Wanting to search for a song\n\n"
-                    f"Help them by:\n"
-                    f"- If they're singing/playing: Suggest using Shazam, Google Sound Search, or describe the song to search\n"
-                    f"- If asking about a song: Provide information or help search\n"
-                    f"- Provide a Google search link to find the song\n"
-                    f"- Be helpful and friendly\n"
-                    f"- Respond in the same language the user used (English or Malayalam)\n"
-                    f"assistant:",
-                    tokens=120
-                )
-            elif command_response == "WAKE_WORD_DETECTED":
-                # Wake word - simple acknowledgment
-                reply = "I'm listening! How can I help you?"
-            elif command_response.startswith("OPEN_"):
-                # Application launch command
-                app_name = command_response.replace("OPEN_", "").replace("_", " ").lower()
-                reply = launch_application(app_name, user_text)
-            else:
-                reply = command_response
+        # Step 2: Check for ALL commands (FAST pattern matching, no LLM)
+        commands = extract_all_commands(user_text)
+
+        if commands:
+            print(f"[INFO] {len(commands)} command(s) detected in: {user_text}")
+            reply = handle_all_commands(commands, user_text)
         else:
             # Normal conversation with LLM
             print("[INFO] Processing with LLM...")
             conversation_history.append({"role": "user", "content": user_text})
-            
+
             if len(conversation_history) > MAX_HISTORY:
                 conversation_history = conversation_history[-MAX_HISTORY:]
-            
-            # Build compact prompt
+
             full_prompt = ""
             for msg in conversation_history:
                 full_prompt += f"{msg['role']}: {msg['content']}\n"
             full_prompt += "assistant:"
-            
-            reply = call_llm(full_prompt, tokens=50)  # Reduced for speed
+
+            reply = call_llm(full_prompt, tokens=50)
             print(f"[INFO] LLM response: {reply[:100]}...")
             conversation_history.append({"role": "assistant", "content": reply})
-            save_conversation_memory()  # Save after each exchange
+            save_conversation_memory()
         
         # Step 3: Convert response to speech
         audio_file = None
@@ -756,5 +752,23 @@ if __name__ == "__main__":
         print("   Users must verify their face before using voice assistant")
         print("   Register faces using: python recognition_advanced.py")
     print("\n" + "="*60 + "\n")
-    
+
+    # Preload LLM model into RAM so first request is fast
+    def _preload_llm():
+        try:
+            print(f"[INFO] Preloading {OLLAMA_MODEL} into memory...")
+            r = requests.post(OLLAMA_URL, json={
+                "model": OLLAMA_MODEL, "prompt": "hi", "stream": False,
+                "options": {"num_predict": 1}
+            }, timeout=60)
+            if r.status_code == 200:
+                print(f"[OK] {OLLAMA_MODEL} loaded and ready (fast responses expected)")
+            else:
+                print(f"[WARNING] Preload returned status {r.status_code}")
+        except Exception as e:
+            print(f"[WARNING] LLM preload failed: {e}")
+
+    import threading
+    threading.Thread(target=_preload_llm, daemon=True).start()
+
     uvicorn.run(app, host="127.0.0.1", port=8000)
